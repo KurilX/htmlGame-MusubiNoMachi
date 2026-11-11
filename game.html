@@ -395,7 +395,7 @@ canvas#gl {
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
 </style>
-<!-- 构建产物：2026-11-11T08:52:56.260Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-11T09:01:51.098Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -1826,6 +1826,422 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 })(window.G = window.G || {});
 
 </script>
+<!-- ==== src/12-textures.js ==== -->
+<script>
+/* 12-textures.js — 程序化材质贴图库
+ *
+ * 所有贴图都用 canvas 代码生成，零图片文件（这是单文件交付的硬约束）。
+ * 分辨率统一 64x64：在 640x360 内部渲染下，一个小物件大概占 20~40 像素，
+ * 64x64 的贴图足够，再大就是浪费。
+ *
+ * 每张贴图都自带"脏感"：随机噪点 + 边缘磨损 + 色斑，
+ * 这是摆脱"纯色块简约感"最关键的一步。
+ */
+(function (G) {
+  'use strict';
+
+  var T = G.tex = {};
+
+  /** 基础工具：造一个 64x64 canvas 并填底色 */
+  function base(size, color) {
+    var c = G.makeCanvas(size, size);
+    var ctx = c.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, size, size);
+    return { c: c, ctx: ctx, size: size };
+  }
+
+  /** 撒噪点（用确定性 RNG，保证同种子同图） */
+  function speckle(ctx, size, rnd, count, colors, scale) {
+    scale = scale || 1;
+    for (var i = 0; i < count; i++) {
+      ctx.fillStyle = colors[Math.floor(rnd() * colors.length)];
+      var x = Math.floor(rnd() * size);
+      var y = Math.floor(rnd() * size);
+      var w = rnd() > 0.85 ? 2 * scale : scale;
+      var h = rnd() > 0.85 ? 2 * scale : scale;
+      ctx.fillRect(x, y, w, h);
+    }
+  }
+
+  /** 在边缘一圈加暗边（模拟磨损/积垢） */
+  function edgeGrime(ctx, size, rnd, color, thickness) {
+    thickness = thickness || 2;
+    ctx.fillStyle = color;
+    for (var i = 0; i < size; i++) {
+      if (rnd() > 0.35) { ctx.fillRect(i, 0, 1, thickness); ctx.fillRect(i, size - thickness, 1, thickness); }
+      if (rnd() > 0.35) { ctx.fillRect(0, i, thickness, 1); ctx.fillRect(size - thickness, i, thickness, 1); }
+    }
+  }
+
+  // =====================================================================
+  // 1) 木纹
+  // =====================================================================
+  T.wood = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 11);
+
+    // 顺纹的深浅条：竖向木纹
+    for (var x = 0; x < size; x++) {
+      var tone = 0.5 + Math.sin(x * 0.55 + rnd() * 0.4) * 0.22
+                     + Math.sin(x * 1.7) * 0.08;
+      if (rnd() > 0.72) tone -= 0.18;
+      b.ctx.fillStyle = G.col.shade(colorHex, (tone - 0.5) * 0.5);
+      b.ctx.globalAlpha = 0.55;
+      b.ctx.fillRect(x, 0, 1, size);
+    }
+    b.ctx.globalAlpha = 1;
+
+    // 横向木节
+    var knots = 1 + Math.floor(rnd() * 2);
+    for (var k = 0; k < knots; k++) {
+      var kx = 8 + rnd() * (size - 16);
+      var ky = 8 + rnd() * (size - 16);
+      b.ctx.strokeStyle = G.col.shade(colorHex, -0.32);
+      b.ctx.lineWidth = 1;
+      for (var r = 2; r < 6; r += 1.6) {
+        b.ctx.beginPath();
+        b.ctx.ellipse(kx, ky, r * 0.7, r, 0, 0, Math.PI * 2);
+        b.ctx.stroke();
+      }
+    }
+
+    // 噪点 + 边缘
+    speckle(b.ctx, size, rnd, 90, [
+      G.col.shade(colorHex, -0.22),
+      G.col.shade(colorHex, 0.14)
+    ]);
+    edgeGrime(b.ctx, size, rnd, G.col.shade(colorHex, -0.3), 1);
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 2) 石砖（用于铺地、基座、台阶）
+  // =====================================================================
+  T.stoneBrick = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 23);
+    var brickH = 16, brickW = 32;
+
+    // 砖缝
+    b.ctx.fillStyle = G.col.shade(colorHex, -0.42);
+    for (var row = 0; row < size / brickH; row++) {
+      var y = row * brickH;
+      b.ctx.fillRect(0, y, size, 1.5);
+      // 竖缝错位
+      var offset = (row % 2) * (brickW / 2);
+      for (var col = -1; col < size / brickW + 1; col++) {
+        var x = col * brickW + offset;
+        b.ctx.fillRect(x, y, 1.5, brickH);
+      }
+    }
+
+    // 每块砖的明暗差异
+    for (var r2 = 0; r2 < size / brickH; r2++) {
+      var y2 = r2 * brickH;
+      var offset2 = (r2 % 2) * (brickW / 2);
+      for (var c2 = -1; c2 < size / brickW + 1; c2++) {
+        var x2 = c2 * brickW + offset2;
+        var tone = (rnd() - 0.5) * 0.24;
+        b.ctx.globalAlpha = 0.5;
+        b.ctx.fillStyle = G.col.shade(colorHex, tone);
+        b.ctx.fillRect(x2 + 2, y2 + 2, brickW - 3, brickH - 3);
+      }
+    }
+    b.ctx.globalAlpha = 1;
+
+    speckle(b.ctx, size, rnd, 120, [
+      G.col.shade(colorHex, -0.18),
+      G.col.shade(colorHex, 0.12)
+    ]);
+    edgeGrime(b.ctx, size, rnd, G.col.shade(colorHex, -0.34), 1);
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 3) 瓦片屋顶（横向弧瓦）
+  // =====================================================================
+  T.roofTile = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 37);
+    var tileW = 8, tileH = 10;
+
+    // 瓦垄（竖条纹）
+    for (var x = 0; x < size; x += tileW) {
+      // 每垄一个半圆高光
+      var grad = b.ctx.createLinearGradient(x, 0, x + tileW, 0);
+      grad.addColorStop(0, G.col.shade(colorHex, -0.3));
+      grad.addColorStop(0.35, G.col.shade(colorHex, 0.18));
+      grad.addColorStop(0.7, G.col.shade(colorHex, 0.02));
+      grad.addColorStop(1, G.col.shade(colorHex, -0.36));
+      b.ctx.fillStyle = grad;
+      b.ctx.fillRect(x, 0, tileW, size);
+    }
+
+    // 横向瓦片错缝
+    b.ctx.fillStyle = G.col.shade(colorHex, -0.42);
+    for (var row = 0; row < size / tileH; row++) {
+      var y = row * tileH;
+      b.ctx.fillRect(0, y, size, 1.5);
+    }
+
+    speckle(b.ctx, size, rnd, 70, [
+      G.col.shade(colorHex, -0.2),
+      G.col.shade(colorHex, 0.14)
+    ]);
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 4) 和纸 / 墙面（细微颗粒 + 纤维）
+  // =====================================================================
+  T.washi = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 53);
+
+    // 纸纤维：细短的横竖线
+    b.ctx.globalAlpha = 0.16;
+    for (var i = 0; i < 70; i++) {
+      var x = rnd() * size, y = rnd() * size;
+      var horiz = rnd() > 0.5;
+      var len = 3 + rnd() * 8;
+      b.ctx.strokeStyle = rnd() > 0.5
+        ? G.col.shade(colorHex, -0.2)
+        : G.col.shade(colorHex, 0.16);
+      b.ctx.beginPath();
+      b.ctx.moveTo(x, y);
+      b.ctx.lineTo(x + (horiz ? len : 0), y + (horiz ? 0 : len));
+      b.ctx.stroke();
+    }
+    b.ctx.globalAlpha = 1;
+
+    speckle(b.ctx, size, rnd, 140, [
+      G.col.shade(colorHex, -0.1),
+      G.col.shade(colorHex, 0.08)
+    ]);
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 5) 草地（比原版更密、有层次）
+  // =====================================================================
+  T.grass = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 5);
+
+    // 大块色斑（低频层次）
+    for (var i = 0; i < 22; i++) {
+      var cx = rnd() * size, cy = rnd() * size;
+      var r = 6 + rnd() * 12;
+      var grd = b.ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      var tone = (rnd() - 0.5) * 0.3;
+      grd.addColorStop(0, G.col.shade(colorHex, tone));
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      b.ctx.fillStyle = grd;
+      b.ctx.globalAlpha = 0.5;
+      b.ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    b.ctx.globalAlpha = 1;
+
+    // 草叶：短的竖向笔画，比噪点更有"草"的感觉
+    for (var g2 = 0; g2 < 260; g2++) {
+      var gx = Math.floor(rnd() * size);
+      var gy = Math.floor(rnd() * size);
+      var gh = 2 + Math.floor(rnd() * 2);
+      b.ctx.fillStyle = rnd() > 0.5
+        ? G.col.shade(colorHex, -0.26)
+        : G.col.shade(colorHex, 0.16);
+      b.ctx.fillRect(gx, gy, 1, gh);
+    }
+
+    // 少量小白花/黄花点缀
+    for (var f = 0; f < 7; f++) {
+      var fx = Math.floor(rnd() * size);
+      var fy = Math.floor(rnd() * size);
+      b.ctx.fillStyle = rnd() > 0.5 ? '#FBF3E4' : '#F2D98A';
+      b.ctx.fillRect(fx, fy, 1, 1);
+    }
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 6) 土路（碎石 + 车辙）
+  // =====================================================================
+  T.dirt = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 71);
+
+    // 色斑
+    for (var i = 0; i < 18; i++) {
+      var cx = rnd() * size, cy = rnd() * size, r = 5 + rnd() * 10;
+      var grd = b.ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grd.addColorStop(0, G.col.shade(colorHex, (rnd() - 0.5) * 0.26));
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      b.ctx.fillStyle = grd;
+      b.ctx.globalAlpha = 0.55;
+      b.ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    b.ctx.globalAlpha = 1;
+
+    // 碎石
+    for (var s = 0; s < 90; s++) {
+      var sx = Math.floor(rnd() * size);
+      var sy = Math.floor(rnd() * size);
+      var sr = rnd() > 0.8 ? 2 : 1;
+      b.ctx.fillStyle = rnd() > 0.5
+        ? G.col.shade(colorHex, -0.34)
+        : G.col.shade(colorHex, 0.2);
+      b.ctx.fillRect(sx, sy, sr, sr);
+    }
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 7) 竹竿（横向分节 + 竖向纤维）
+  // =====================================================================
+  T.bambooSkin = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 83);
+
+    // 竖向纤维
+    for (var x = 0; x < size; x += 2) {
+      b.ctx.globalAlpha = 0.3;
+      b.ctx.fillStyle = rnd() > 0.5
+        ? G.col.shade(colorHex, 0.12)
+        : G.col.shade(colorHex, -0.12);
+      b.ctx.fillRect(x, 0, 1, size);
+    }
+    b.ctx.globalAlpha = 1;
+
+    // 横向竹节
+    b.ctx.fillStyle = G.col.shade(colorHex, -0.4);
+    for (var n = 0; n < 3; n++) {
+      var y = 10 + n * 20;
+      b.ctx.fillRect(0, y, size, 2);
+      b.ctx.fillStyle = G.col.shade(colorHex, 0.24);
+      b.ctx.fillRect(0, y + 2, size, 1);
+      b.ctx.fillStyle = G.col.shade(colorHex, -0.4);
+    }
+
+    speckle(b.ctx, size, rnd, 40, [G.col.shade(colorHex, -0.18)]);
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 8) 树干（粗糙纵向裂纹）
+  // =====================================================================
+  T.bark = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 97);
+
+    // 纵向裂纹
+    for (var i = 0; i < 16; i++) {
+      var x = rnd() * size;
+      b.ctx.strokeStyle = G.col.shade(colorHex, -0.36);
+      b.ctx.lineWidth = rnd() > 0.7 ? 2 : 1;
+      b.ctx.beginPath();
+      b.ctx.moveTo(x, 0);
+      var cy = 0;
+      while (cy < size) {
+        cy += 6 + rnd() * 10;
+        x += (rnd() - 0.5) * 3;
+        b.ctx.lineTo(x, cy);
+      }
+      b.ctx.stroke();
+    }
+
+    // 高光棱
+    for (var j = 0; j < 10; j++) {
+      b.ctx.globalAlpha = 0.25;
+      b.ctx.fillStyle = G.col.shade(colorHex, 0.2);
+      b.ctx.fillRect(rnd() * size, 0, 1, size);
+    }
+    b.ctx.globalAlpha = 1;
+
+    speckle(b.ctx, size, rnd, 80, [
+      G.col.shade(colorHex, -0.24),
+      G.col.shade(colorHex, 0.14)
+    ]);
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 9) 樱花花瓣簇（给花冠用，带花瓣层次）
+  // =====================================================================
+  T.blossom = function (colorHex, opt) {
+    opt = opt || {};
+    var size = 64;
+    var b = base(size, colorHex);
+    var rnd = G.mulberry32(opt.seed || 131);
+
+    // 一堆大小不一的圆点 = 花瓣团
+    for (var i = 0; i < 60; i++) {
+      var cx = rnd() * size, cy = rnd() * size;
+      var r = 2 + rnd() * 5;
+      var tone = (rnd() - 0.5) * 0.34;
+      b.ctx.fillStyle = G.col.shade(colorHex, tone);
+      b.ctx.globalAlpha = 0.85;
+      b.ctx.beginPath();
+      b.ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      b.ctx.fill();
+    }
+    b.ctx.globalAlpha = 1;
+
+    // 深色花瓣间隙
+    for (var j = 0; j < 24; j++) {
+      b.ctx.fillStyle = G.col.shade(colorHex, -0.28);
+      b.ctx.globalAlpha = 0.5;
+      b.ctx.beginPath();
+      b.ctx.arc(rnd() * size, rnd() * size, 1 + rnd() * 2, 0, Math.PI * 2);
+      b.ctx.fill();
+    }
+    b.ctx.globalAlpha = 1;
+
+    return G.canvasTexture(b.c);
+  };
+
+  // =====================================================================
+  // 通用缓存：同参数只生成一次
+  // =====================================================================
+  var cache = {};
+  G.texCached = function (kind, colorHex, opt) {
+    var key = kind + '|' + colorHex + '|' + JSON.stringify(opt || {});
+    if (!cache[key]) {
+      var fn = T[kind];
+      if (!fn) { console.warn('[tex] unknown kind', kind); return null; }
+      cache[key] = fn(colorHex, opt);
+      cache[key].wrapS = THREE.RepeatWrapping;
+      cache[key].wrapT = THREE.RepeatWrapping;
+    }
+    return cache[key];
+  };
+
+})(window.G = window.G || {});
+
+</script>
 <!-- ==== src/20-art-chibi.js ==== -->
 <script>
 /* 20-art-chibi.js — chibi 立绘程序化绘制
@@ -2262,8 +2678,47 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     return matCache[key];
   }
 
+  // 带贴图的材质缓存：textureKind 决定用哪张程序化贴图
+  var texMatCache = {};
+  function texMat(colorHex, texKind, opt) {
+    opt = opt || {};
+    var rep = opt.repeat || 1;
+    var key = colorHex + '|' + texKind + '|' + rep + '|' + JSON.stringify(opt);
+    if (!texMatCache[key]) {
+      var tex = G.texCached(texKind, colorHex, { seed: opt.seed });
+      if (tex) {
+        tex = tex.clone();
+        tex.needsUpdate = true;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(rep, rep);
+        tex.minFilter = THREE.NearestFilter;
+        tex.magFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+      }
+      texMatCache[key] = G.celMaterial(tex ? '#FFFFFF' : colorHex, {
+        steps: opt.steps != null ? opt.steps : 2,
+        darkness: opt.darkness != null ? opt.darkness : 0.86,
+        map: tex || undefined,
+        side: opt.side,
+        transparent: opt.transparent,
+        opacity: opt.opacity,
+        vertexColors: opt.vertexColors
+      });
+    }
+    return texMatCache[key];
+  }
+
   function mesh(geo, color, opt) {
     var m = new THREE.Mesh(geo, mat(color, opt));
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+
+  /** 带贴图的 mesh */
+  function tmesh(geo, color, texKind, opt) {
+    var m = new THREE.Mesh(geo, texMat(color, texKind, opt));
     m.castShadow = true;
     m.receiveShadow = true;
     return m;
@@ -2278,42 +2733,42 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     var w = opt.width || 5;
 
     // 两根柱子
-    var pillarGeo = new THREE.CylinderGeometry(0.28, 0.34, h, 6);
-    var p1 = mesh(pillarGeo, c);
+    var pillarGeo = new THREE.CylinderGeometry(0.28, 0.34, h, 8);
+    var p1 = tmesh(pillarGeo, c, 'wood', { repeat: 1, seed: 11 });
     p1.position.set(-w / 2, h / 2, 0);
-    var p2 = mesh(pillarGeo, c);
+    var p2 = tmesh(pillarGeo, c, 'wood', { repeat: 1, seed: 11 });
     p2.position.set(w / 2, h / 2, 0);
     g.add(p1, p2);
 
     // 柱子基座（石）
-    var baseGeo = new THREE.CylinderGeometry(0.5, 0.6, 0.5, 6);
+    var baseGeo = new THREE.CylinderGeometry(0.5, 0.6, 0.5, 8);
     [-w / 2, w / 2].forEach(function (x) {
-      var b = mesh(baseGeo, G.PALETTE.stone);
+      var b = tmesh(baseGeo, G.PALETTE.stone, 'stoneBrick', { repeat: 1, seed: 13 });
       b.position.set(x, 0.25, 0);
       g.add(b);
     });
 
     // 笠木（顶部横梁，两端上翘）
     var beamGeo = new THREE.BoxGeometry(w + 2.4, 0.42, 0.5);
-    var beam = mesh(beamGeo, c);
+    var beam = tmesh(beamGeo, c, 'wood', { repeat: 2, seed: 15 });
     beam.position.set(0, h + 0.5, 0);
     g.add(beam);
 
     // 两端上翘（用旋转的小块伪造）
     [-1, 1].forEach(function (s) {
-      var tip = mesh(new THREE.BoxGeometry(1.4, 0.36, 0.5), c);
+      var tip = tmesh(new THREE.BoxGeometry(1.4, 0.36, 0.5), c, 'wood', { repeat: 1, seed: 17 });
       tip.position.set(s * (w / 2 + 1.3), h + 0.72, 0);
       tip.rotation.z = s * 0.28;
       g.add(tip);
     });
 
     // 岛木（第二道梁）
-    var beam2 = mesh(new THREE.BoxGeometry(w + 0.6, 0.3, 0.36), c);
+    var beam2 = tmesh(new THREE.BoxGeometry(w + 0.6, 0.3, 0.36), c, 'wood', { repeat: 2, seed: 19 });
     beam2.position.set(0, h - 0.45, 0);
     g.add(beam2);
 
     // 额束（中间小竖块）
-    var mid = mesh(new THREE.BoxGeometry(0.5, 0.9, 0.3), c);
+    var mid = tmesh(new THREE.BoxGeometry(0.5, 0.9, 0.3), c, 'wood', { repeat: 1, seed: 21 });
     mid.position.set(0, h - 0.1, 0);
     g.add(mid);
 
@@ -2375,9 +2830,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     // 树干
     var trunkH = (2.6 + rnd() * 1.2) * scale;
-    var trunk = mesh(
-      new THREE.CylinderGeometry(0.16 * scale, 0.32 * scale, trunkH, 5),
-      G.PALETTE.woodDark
+    var trunk = tmesh(
+      new THREE.CylinderGeometry(0.16 * scale, 0.32 * scale, trunkH, 7),
+      G.PALETTE.woodDark, 'bark', { repeat: 1, seed: Math.floor((opt.seed || 1) * 3) }
     );
     trunk.position.y = trunkH / 2;
     g.add(trunk);
@@ -2386,8 +2841,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     var branchCount = 3 + Math.floor(rnd() * 2);
     for (var i = 0; i < branchCount; i++) {
       var bl = (1.0 + rnd() * 0.7) * scale;
-      var br = mesh(new THREE.CylinderGeometry(0.06 * scale, 0.12 * scale, bl, 4),
-        G.PALETTE.woodDark);
+      var br = tmesh(new THREE.CylinderGeometry(0.06 * scale, 0.12 * scale, bl, 5),
+        G.PALETTE.woodDark, 'bark', { repeat: 1, seed: Math.floor((opt.seed || 1) * 5) });
       var a = (i / branchCount) * Math.PI * 2 + rnd() * 0.4;
       br.position.set(Math.cos(a) * 0.35 * scale, trunkH * 0.85, Math.sin(a) * 0.35 * scale);
       br.rotation.z = Math.cos(a) * 0.5;
@@ -2395,15 +2850,15 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       g.add(br);
     }
 
-    // 花冠：几个扁球堆叠
+    // 花冠：用花瓣簇贴图的扁球，比纯色多很多层次
     var blossomColors = [G.PALETTE.sakura, '#FBE0E8', '#F2B8CC'];
-    var clusters = 4 + Math.floor(rnd() * 3);
+    var clusters = 5 + Math.floor(rnd() * 3);
     for (var c = 0; c < clusters; c++) {
-      var cr = (0.7 + rnd() * 0.55) * scale;
-      var bloom = mesh(
-        new THREE.IcosahedronGeometry(cr, 0),
-        blossomColors[c % blossomColors.length],
-        { steps: 2, darkness: 0.68 }
+      var cr = (0.65 + rnd() * 0.5) * scale;
+      var bloom = tmesh(
+        new THREE.IcosahedronGeometry(cr, 1),
+        blossomColors[c % blossomColors.length], 'blossom',
+        { repeat: 2, seed: 140 + c }
       );
       var ang = rnd() * Math.PI * 2;
       var rad = (0.3 + rnd() * 0.85) * scale;
@@ -2412,7 +2867,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         trunkH + 0.15 * scale + (rnd() - 0.3) * 0.9 * scale,
         Math.sin(ang) * rad
       );
-      bloom.scale.y = 0.75;
+      bloom.scale.y = 0.78;
+      bloom.rotation.set(rnd(), rnd(), rnd());
       g.add(bloom);
     }
 
@@ -2427,14 +2883,15 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     var w = opt.w || 5, d = opt.d || 4.5, h = opt.h || 2.4;
 
     // 墙
-    var walls = mesh(new THREE.BoxGeometry(w, h, d), opt.wall || G.PALETTE.cream);
+    var walls = tmesh(new THREE.BoxGeometry(w, h, d), opt.wall || G.PALETTE.cream, 'washi',
+      { repeat: 2, seed: 23 });
     walls.position.y = h / 2;
     g.add(walls);
 
     // 木骨架（露柱）
     var postGeo = new THREE.BoxGeometry(0.18, h, 0.18);
     [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]].forEach(function (p) {
-      var post = mesh(postGeo, G.PALETTE.woodDark);
+      var post = tmesh(postGeo, G.PALETTE.woodDark, 'wood', { repeat: 1, seed: 25 });
       post.position.set(p[0] * 0.98, h / 2, p[1] * 0.98);
       g.add(post);
     });
@@ -2444,18 +2901,21 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     var pitch = 0.42;
     var slopeLen = Math.sqrt(Math.pow(d / 2 + 0.6, 2) + Math.pow(1.3, 2));
     [-1, 1].forEach(function (s) {
-      var slab = mesh(new THREE.BoxGeometry(w + 0.9, 0.16, slopeLen), opt.roof || G.PALETTE.vermilionD);
+      var slab = tmesh(new THREE.BoxGeometry(w + 0.9, 0.16, slopeLen),
+        opt.roof || G.PALETTE.vermilionD, 'roofTile', { repeat: 3, seed: 27 });
       slab.position.set(0, h + 0.65, s * (d / 4 + 0.15));
       slab.rotation.x = s * pitch;
       g.add(slab);
     });
     // 屋脊
-    var ridge = mesh(new THREE.BoxGeometry(w + 1.0, 0.2, 0.3), G.PALETTE.woodDark);
+    var ridge = tmesh(new THREE.BoxGeometry(w + 1.0, 0.2, 0.3), G.PALETTE.woodDark, 'wood',
+      { repeat: 2, seed: 29 });
     ridge.position.set(0, h + 1.28, 0);
     g.add(ridge);
 
     // 门
-    var door = mesh(new THREE.BoxGeometry(1.1, 1.7, 0.08), G.PALETTE.wood);
+    var door = tmesh(new THREE.BoxGeometry(1.1, 1.7, 0.08), G.PALETTE.wood, 'wood',
+      { repeat: 1, seed: 31 });
     door.position.set(0, 0.85, d / 2 + 0.02);
     g.add(door);
     // 暖帘
@@ -2511,9 +2971,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       var px = Math.cos(a) * rad;
       var pz = Math.sin(a) * rad;
 
-      // 竹竿：6 面，略带锥度
-      var stalk = mesh(new THREE.CylinderGeometry(r * 0.86, r, h, 6), col,
-        { steps: 2, darkness: 0.86 });
+      // 竹竿：6 面，略带锥度，带竹皮贴图（分节 + 纤维）
+      var stalk = tmesh(new THREE.CylinderGeometry(r * 0.86, r, h, 7), col, 'bambooSkin',
+        { repeat: 1, seed: 400 + i });
       stalk.position.set(px, h / 2, pz);
       stalk.rotation.z = (rnd() - 0.5) * 0.09;
       stalk.rotation.x = (rnd() - 0.5) * 0.09;
@@ -2943,31 +3403,82 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   };
 
   // ---------- 石灯笼（地标点缀） ----------
+  //
+  // 【重要观察】这类小物件在 640x360 画面里只占约 20~30 像素高。
+  // 在这个尺寸下，64x64 的贴图细节会全部糊成一片，反而让物体发灰发脏。
+  // 所以石灯笼的策略是：**不加贴图，用明度层次和形状说话**——
+  //   - 石身用偏亮的暖灰（比原来提亮）
+  //   - 灯窗用高亮自发光，形成强对比（这是等距小物件最有效的"辨识点"）
+  //   - 顶盖用更深的色，形成三层明度梯队
   W.stoneLantern = function (opt) {
     opt = opt || {};
     var g = new THREE.Group();
     var s = opt.scale || 1;
-    var base = mesh(new THREE.CylinderGeometry(0.42 * s, 0.5 * s, 0.3 * s, 6), G.PALETTE.stone);
-    base.position.y = 0.15 * s;
-    g.add(base);
-    var post = mesh(new THREE.CylinderGeometry(0.16 * s, 0.2 * s, 1.1 * s, 6), G.PALETTE.stone);
-    post.position.y = 0.85 * s;
-    g.add(post);
-    var box = new THREE.Mesh(
-      new THREE.BoxGeometry(0.55 * s, 0.45 * s, 0.55 * s),
-      G.celMaterial(G.PALETTE.lampGlow, {
-        steps: 2, darkness: 0.94,
-        emissive: G.PALETTE.lampGlow, emissiveIntensity: 0.75
-      })
-    );
-    box.position.y = 1.62 * s;
-    g.add(box);
-    var roof = mesh(new THREE.ConeGeometry(0.55 * s, 0.38 * s, 4), G.PALETTE.stoneDark);
-    roof.position.y = 2.02 * s;
-    roof.rotation.y = Math.PI / 4;
-    g.add(roof);
-    var pl = new THREE.PointLight(0xFFE0A0, 0.8, 5, 2);
-    pl.position.y = 1.62 * s;
+
+    // 明度梯队：底座(中) -> 柱(亮) -> 灯窗(最亮) -> 盖(暗)
+    // 提亮过一轮：初版 #B8B2A4/#D0CABC/#8A857A 在 Toon 暗部 +
+    // 接地 AO 叠加后会整体发灰，和粉彩草地不协调。
+    var stoneMid = '#CFC9BA';
+    var stoneLight = '#E2DCCE';
+    var stoneDark = '#A0998C';
+
+    // 台座
+    var pad = mesh(new THREE.CylinderGeometry(0.52 * s, 0.6 * s, 0.1 * s, 8), stoneDark);
+    pad.position.y = 0.05 * s;
+    g.add(pad);
+
+    // 柱身：分段（下粗上细）+ 中段加一圈装饰环
+    var lower = mesh(new THREE.CylinderGeometry(0.18 * s, 0.24 * s, 0.62 * s, 8), stoneLight);
+    lower.position.y = 0.41 * s;
+    g.add(lower);
+    var ring = mesh(new THREE.CylinderGeometry(0.26 * s, 0.26 * s, 0.08 * s, 8), stoneMid);
+    ring.position.y = 0.72 * s;
+    g.add(ring);
+    var upper = mesh(new THREE.CylinderGeometry(0.15 * s, 0.18 * s, 0.5 * s, 8), stoneLight);
+    upper.position.y = 1.0 * s;
+    g.add(upper);
+
+    // 中台（承接灯室）
+    var midBase = mesh(new THREE.CylinderGeometry(0.42 * s, 0.3 * s, 0.12 * s, 8), stoneMid);
+    midBase.position.y = 1.3 * s;
+    g.add(midBase);
+
+    // 灯室：四角柱 + 三面开窗（自发光）
+    var room = mesh(new THREE.BoxGeometry(0.62 * s, 0.5 * s, 0.62 * s), stoneMid);
+    room.position.y = 1.61 * s;
+    g.add(room);
+    // 发光窗：三面（正面 + 两个侧面），用高亮自发光
+    var winMat = G.celMaterial('#FFE9A8', {
+      steps: 2, darkness: 1.0,
+      emissive: '#FFD878', emissiveIntensity: 1.15
+    });
+    [[0, 0.32], [0.32, 0], [-0.32, 0]].forEach(function (off) {
+      var win = new THREE.Mesh(new THREE.BoxGeometry(0.34 * s, 0.28 * s, 0.34 * s), winMat);
+      if (off[0] !== 0) win.position.set(off[0] * s, 1.61 * s, 0);
+      else win.position.set(0, 1.61 * s, off[1] * s);
+      // 压扁成"窗"的厚度
+      if (off[0] !== 0) win.scale.x = 0.06;
+      else win.scale.z = 0.06;
+      g.add(win);
+    });
+
+    // 顶盖：双层四坡，深色压住上沿
+    var eave1 = mesh(new THREE.ConeGeometry(0.66 * s, 0.26 * s, 4), stoneDark);
+    eave1.position.y = 1.94 * s;
+    eave1.rotation.y = Math.PI / 4;
+    g.add(eave1);
+    var eave2 = mesh(new THREE.ConeGeometry(0.5 * s, 0.2 * s, 4), stoneMid);
+    eave2.position.y = 2.1 * s;
+    eave2.rotation.y = Math.PI / 4;
+    g.add(eave2);
+
+    // 宝顶
+    var finial = mesh(new THREE.SphereGeometry(0.1 * s, 6, 5), stoneLight);
+    finial.position.y = 2.26 * s;
+    g.add(finial);
+
+    var pl = new THREE.PointLight(0xFFE0A0, 0.9, 5.5, 2);
+    pl.position.y = 1.61 * s;
     g.add(pl);
     g.userData.light = pl;
     return g;
@@ -5913,6 +6424,17 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       obj.userData.spec = spec;
       obj.userData.baseY = obj.position.y;
       obj.userData.floatPhase = Math.random() * 6.28;
+
+      // 烘焙接地 AO：越贴近地面的部分越暗。
+      // 这是"告别纯色块简约感"最有效的一步——没有接触阴影，
+      // 物体看起来像贴纸浮在绿布上。
+      // falloff 由 bakeContactAO 内部按物体高度自动算（踩过：写死会烧黑细高物体）。
+      if (spec.type !== 'water' && spec.type !== 'path' &&
+          spec.type !== 'pagoda' && spec.type !== 'knot' && spec.type !== 'gate') {
+        W.bakeContactAO(obj, W.groundY(spec.x, spec.z), {
+          strength: spec.type === 'house' ? 0.38 : 0.42
+        });
+      }
     }
     return obj;
   };
@@ -6009,6 +6531,71 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     flowers.instanceColor.needsUpdate = true;
     W.scene.add(flowers);
     W.vegetation.flowers = flowers;
+  };
+
+  /**
+   * 给一组几何体烘焙"接地 AO"：越靠近地面越暗。
+   *
+   * 为什么用顶点色而不是 SSAO：
+   *   SSAO 需要额外 G-Buffer + 多次采样，在 640x360 上每帧都是明显的开销，
+   *   而且 file:// 单文件下没有后处理链可用。顶点色烘焙是零运行时成本，
+   *   且这类"物体与地面的接触阴影"本来就是静态的，烘一次就够。
+   *
+   * 【踩过的坑：AO 把细高物体烧黑】
+   * 初版对石灯笼/竹子也用了 falloff=1.3、strength=0.5。这两类物体
+   * 整体高度只有 1~2 单位，顶点几乎全部落在 falloff 之内，
+   * AO 系数接近 0.5，再叠加 Toon 暗部 -> 渲染成黑灰色块。
+   * 正确做法：falloff 必须与物体自身高度成比例，
+   * 只让"真正贴地的那一小段"变暗。
+   *
+   * @param {THREE.Group} group
+   * @param {number} groundY 该物件所在地面高度
+   * @param {object} opt { strength, falloff, height }
+   */
+  W.bakeContactAO = function (group, groundY, opt) {
+    opt = opt || {};
+    var strength = opt.strength != null ? opt.strength : 0.5;
+
+    // 先量出这个 group 的实际高度范围
+    var box = new THREE.Box3().setFromObject(group);
+    var groupHeight = Math.max(0.5, box.max.y - (groundY || 0));
+
+    // falloff 默认取高度的 22%，最少 0.35：
+    // 这样只有底部一小圈被压暗，不会把整个物体烧掉。
+    var falloff = opt.falloff != null
+      ? opt.falloff
+      : Math.max(0.35, groupHeight * 0.22);
+
+    group.traverse(function (node) {
+      if (!node.isMesh || !node.geometry) return;
+      var geo = node.geometry;
+      if (geo.attributes.color) return;   // 已经烘过
+
+      var pos = geo.attributes.position;
+      if (!pos) return;
+
+      node.updateMatrixWorld(true);
+      var colors = new Float32Array(pos.count * 3);
+      var v = new THREE.Vector3();
+
+      for (var i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        v.applyMatrix4(node.matrixWorld);
+        var h = v.y - groundY;
+        var t = G.M.clamp01(h / falloff);
+        // 平滑衰减：只有最底部接近 1-strength
+        var ao = 1 - strength * (1 - t) * (1 - t);
+        colors[i * 3] = ao;
+        colors[i * 3 + 1] = ao;
+        colors[i * 3 + 2] = ao;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      if (node.material && !node.material.vertexColors) {
+        node.material.vertexColors = true;
+        node.material.needsUpdate = true;
+      }
+    });
   };
 
   // ---------- 碰撞体（手工简单形状，够用且快） ----------

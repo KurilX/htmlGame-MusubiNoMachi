@@ -17,8 +17,47 @@
     return matCache[key];
   }
 
+  // 带贴图的材质缓存：textureKind 决定用哪张程序化贴图
+  var texMatCache = {};
+  function texMat(colorHex, texKind, opt) {
+    opt = opt || {};
+    var rep = opt.repeat || 1;
+    var key = colorHex + '|' + texKind + '|' + rep + '|' + JSON.stringify(opt);
+    if (!texMatCache[key]) {
+      var tex = G.texCached(texKind, colorHex, { seed: opt.seed });
+      if (tex) {
+        tex = tex.clone();
+        tex.needsUpdate = true;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(rep, rep);
+        tex.minFilter = THREE.NearestFilter;
+        tex.magFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+      }
+      texMatCache[key] = G.celMaterial(tex ? '#FFFFFF' : colorHex, {
+        steps: opt.steps != null ? opt.steps : 2,
+        darkness: opt.darkness != null ? opt.darkness : 0.86,
+        map: tex || undefined,
+        side: opt.side,
+        transparent: opt.transparent,
+        opacity: opt.opacity,
+        vertexColors: opt.vertexColors
+      });
+    }
+    return texMatCache[key];
+  }
+
   function mesh(geo, color, opt) {
     var m = new THREE.Mesh(geo, mat(color, opt));
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+
+  /** 带贴图的 mesh */
+  function tmesh(geo, color, texKind, opt) {
+    var m = new THREE.Mesh(geo, texMat(color, texKind, opt));
     m.castShadow = true;
     m.receiveShadow = true;
     return m;
@@ -33,42 +72,42 @@
     var w = opt.width || 5;
 
     // 两根柱子
-    var pillarGeo = new THREE.CylinderGeometry(0.28, 0.34, h, 6);
-    var p1 = mesh(pillarGeo, c);
+    var pillarGeo = new THREE.CylinderGeometry(0.28, 0.34, h, 8);
+    var p1 = tmesh(pillarGeo, c, 'wood', { repeat: 1, seed: 11 });
     p1.position.set(-w / 2, h / 2, 0);
-    var p2 = mesh(pillarGeo, c);
+    var p2 = tmesh(pillarGeo, c, 'wood', { repeat: 1, seed: 11 });
     p2.position.set(w / 2, h / 2, 0);
     g.add(p1, p2);
 
     // 柱子基座（石）
-    var baseGeo = new THREE.CylinderGeometry(0.5, 0.6, 0.5, 6);
+    var baseGeo = new THREE.CylinderGeometry(0.5, 0.6, 0.5, 8);
     [-w / 2, w / 2].forEach(function (x) {
-      var b = mesh(baseGeo, G.PALETTE.stone);
+      var b = tmesh(baseGeo, G.PALETTE.stone, 'stoneBrick', { repeat: 1, seed: 13 });
       b.position.set(x, 0.25, 0);
       g.add(b);
     });
 
     // 笠木（顶部横梁，两端上翘）
     var beamGeo = new THREE.BoxGeometry(w + 2.4, 0.42, 0.5);
-    var beam = mesh(beamGeo, c);
+    var beam = tmesh(beamGeo, c, 'wood', { repeat: 2, seed: 15 });
     beam.position.set(0, h + 0.5, 0);
     g.add(beam);
 
     // 两端上翘（用旋转的小块伪造）
     [-1, 1].forEach(function (s) {
-      var tip = mesh(new THREE.BoxGeometry(1.4, 0.36, 0.5), c);
+      var tip = tmesh(new THREE.BoxGeometry(1.4, 0.36, 0.5), c, 'wood', { repeat: 1, seed: 17 });
       tip.position.set(s * (w / 2 + 1.3), h + 0.72, 0);
       tip.rotation.z = s * 0.28;
       g.add(tip);
     });
 
     // 岛木（第二道梁）
-    var beam2 = mesh(new THREE.BoxGeometry(w + 0.6, 0.3, 0.36), c);
+    var beam2 = tmesh(new THREE.BoxGeometry(w + 0.6, 0.3, 0.36), c, 'wood', { repeat: 2, seed: 19 });
     beam2.position.set(0, h - 0.45, 0);
     g.add(beam2);
 
     // 额束（中间小竖块）
-    var mid = mesh(new THREE.BoxGeometry(0.5, 0.9, 0.3), c);
+    var mid = tmesh(new THREE.BoxGeometry(0.5, 0.9, 0.3), c, 'wood', { repeat: 1, seed: 21 });
     mid.position.set(0, h - 0.1, 0);
     g.add(mid);
 
@@ -130,9 +169,9 @@
 
     // 树干
     var trunkH = (2.6 + rnd() * 1.2) * scale;
-    var trunk = mesh(
-      new THREE.CylinderGeometry(0.16 * scale, 0.32 * scale, trunkH, 5),
-      G.PALETTE.woodDark
+    var trunk = tmesh(
+      new THREE.CylinderGeometry(0.16 * scale, 0.32 * scale, trunkH, 7),
+      G.PALETTE.woodDark, 'bark', { repeat: 1, seed: Math.floor((opt.seed || 1) * 3) }
     );
     trunk.position.y = trunkH / 2;
     g.add(trunk);
@@ -141,8 +180,8 @@
     var branchCount = 3 + Math.floor(rnd() * 2);
     for (var i = 0; i < branchCount; i++) {
       var bl = (1.0 + rnd() * 0.7) * scale;
-      var br = mesh(new THREE.CylinderGeometry(0.06 * scale, 0.12 * scale, bl, 4),
-        G.PALETTE.woodDark);
+      var br = tmesh(new THREE.CylinderGeometry(0.06 * scale, 0.12 * scale, bl, 5),
+        G.PALETTE.woodDark, 'bark', { repeat: 1, seed: Math.floor((opt.seed || 1) * 5) });
       var a = (i / branchCount) * Math.PI * 2 + rnd() * 0.4;
       br.position.set(Math.cos(a) * 0.35 * scale, trunkH * 0.85, Math.sin(a) * 0.35 * scale);
       br.rotation.z = Math.cos(a) * 0.5;
@@ -150,15 +189,15 @@
       g.add(br);
     }
 
-    // 花冠：几个扁球堆叠
+    // 花冠：用花瓣簇贴图的扁球，比纯色多很多层次
     var blossomColors = [G.PALETTE.sakura, '#FBE0E8', '#F2B8CC'];
-    var clusters = 4 + Math.floor(rnd() * 3);
+    var clusters = 5 + Math.floor(rnd() * 3);
     for (var c = 0; c < clusters; c++) {
-      var cr = (0.7 + rnd() * 0.55) * scale;
-      var bloom = mesh(
-        new THREE.IcosahedronGeometry(cr, 0),
-        blossomColors[c % blossomColors.length],
-        { steps: 2, darkness: 0.68 }
+      var cr = (0.65 + rnd() * 0.5) * scale;
+      var bloom = tmesh(
+        new THREE.IcosahedronGeometry(cr, 1),
+        blossomColors[c % blossomColors.length], 'blossom',
+        { repeat: 2, seed: 140 + c }
       );
       var ang = rnd() * Math.PI * 2;
       var rad = (0.3 + rnd() * 0.85) * scale;
@@ -167,7 +206,8 @@
         trunkH + 0.15 * scale + (rnd() - 0.3) * 0.9 * scale,
         Math.sin(ang) * rad
       );
-      bloom.scale.y = 0.75;
+      bloom.scale.y = 0.78;
+      bloom.rotation.set(rnd(), rnd(), rnd());
       g.add(bloom);
     }
 
@@ -182,14 +222,15 @@
     var w = opt.w || 5, d = opt.d || 4.5, h = opt.h || 2.4;
 
     // 墙
-    var walls = mesh(new THREE.BoxGeometry(w, h, d), opt.wall || G.PALETTE.cream);
+    var walls = tmesh(new THREE.BoxGeometry(w, h, d), opt.wall || G.PALETTE.cream, 'washi',
+      { repeat: 2, seed: 23 });
     walls.position.y = h / 2;
     g.add(walls);
 
     // 木骨架（露柱）
     var postGeo = new THREE.BoxGeometry(0.18, h, 0.18);
     [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]].forEach(function (p) {
-      var post = mesh(postGeo, G.PALETTE.woodDark);
+      var post = tmesh(postGeo, G.PALETTE.woodDark, 'wood', { repeat: 1, seed: 25 });
       post.position.set(p[0] * 0.98, h / 2, p[1] * 0.98);
       g.add(post);
     });
@@ -199,18 +240,21 @@
     var pitch = 0.42;
     var slopeLen = Math.sqrt(Math.pow(d / 2 + 0.6, 2) + Math.pow(1.3, 2));
     [-1, 1].forEach(function (s) {
-      var slab = mesh(new THREE.BoxGeometry(w + 0.9, 0.16, slopeLen), opt.roof || G.PALETTE.vermilionD);
+      var slab = tmesh(new THREE.BoxGeometry(w + 0.9, 0.16, slopeLen),
+        opt.roof || G.PALETTE.vermilionD, 'roofTile', { repeat: 3, seed: 27 });
       slab.position.set(0, h + 0.65, s * (d / 4 + 0.15));
       slab.rotation.x = s * pitch;
       g.add(slab);
     });
     // 屋脊
-    var ridge = mesh(new THREE.BoxGeometry(w + 1.0, 0.2, 0.3), G.PALETTE.woodDark);
+    var ridge = tmesh(new THREE.BoxGeometry(w + 1.0, 0.2, 0.3), G.PALETTE.woodDark, 'wood',
+      { repeat: 2, seed: 29 });
     ridge.position.set(0, h + 1.28, 0);
     g.add(ridge);
 
     // 门
-    var door = mesh(new THREE.BoxGeometry(1.1, 1.7, 0.08), G.PALETTE.wood);
+    var door = tmesh(new THREE.BoxGeometry(1.1, 1.7, 0.08), G.PALETTE.wood, 'wood',
+      { repeat: 1, seed: 31 });
     door.position.set(0, 0.85, d / 2 + 0.02);
     g.add(door);
     // 暖帘
@@ -266,9 +310,9 @@
       var px = Math.cos(a) * rad;
       var pz = Math.sin(a) * rad;
 
-      // 竹竿：6 面，略带锥度
-      var stalk = mesh(new THREE.CylinderGeometry(r * 0.86, r, h, 6), col,
-        { steps: 2, darkness: 0.86 });
+      // 竹竿：6 面，略带锥度，带竹皮贴图（分节 + 纤维）
+      var stalk = tmesh(new THREE.CylinderGeometry(r * 0.86, r, h, 7), col, 'bambooSkin',
+        { repeat: 1, seed: 400 + i });
       stalk.position.set(px, h / 2, pz);
       stalk.rotation.z = (rnd() - 0.5) * 0.09;
       stalk.rotation.x = (rnd() - 0.5) * 0.09;
@@ -698,31 +742,82 @@
   };
 
   // ---------- 石灯笼（地标点缀） ----------
+  //
+  // 【重要观察】这类小物件在 640x360 画面里只占约 20~30 像素高。
+  // 在这个尺寸下，64x64 的贴图细节会全部糊成一片，反而让物体发灰发脏。
+  // 所以石灯笼的策略是：**不加贴图，用明度层次和形状说话**——
+  //   - 石身用偏亮的暖灰（比原来提亮）
+  //   - 灯窗用高亮自发光，形成强对比（这是等距小物件最有效的"辨识点"）
+  //   - 顶盖用更深的色，形成三层明度梯队
   W.stoneLantern = function (opt) {
     opt = opt || {};
     var g = new THREE.Group();
     var s = opt.scale || 1;
-    var base = mesh(new THREE.CylinderGeometry(0.42 * s, 0.5 * s, 0.3 * s, 6), G.PALETTE.stone);
-    base.position.y = 0.15 * s;
-    g.add(base);
-    var post = mesh(new THREE.CylinderGeometry(0.16 * s, 0.2 * s, 1.1 * s, 6), G.PALETTE.stone);
-    post.position.y = 0.85 * s;
-    g.add(post);
-    var box = new THREE.Mesh(
-      new THREE.BoxGeometry(0.55 * s, 0.45 * s, 0.55 * s),
-      G.celMaterial(G.PALETTE.lampGlow, {
-        steps: 2, darkness: 0.94,
-        emissive: G.PALETTE.lampGlow, emissiveIntensity: 0.75
-      })
-    );
-    box.position.y = 1.62 * s;
-    g.add(box);
-    var roof = mesh(new THREE.ConeGeometry(0.55 * s, 0.38 * s, 4), G.PALETTE.stoneDark);
-    roof.position.y = 2.02 * s;
-    roof.rotation.y = Math.PI / 4;
-    g.add(roof);
-    var pl = new THREE.PointLight(0xFFE0A0, 0.8, 5, 2);
-    pl.position.y = 1.62 * s;
+
+    // 明度梯队：底座(中) -> 柱(亮) -> 灯窗(最亮) -> 盖(暗)
+    // 提亮过一轮：初版 #B8B2A4/#D0CABC/#8A857A 在 Toon 暗部 +
+    // 接地 AO 叠加后会整体发灰，和粉彩草地不协调。
+    var stoneMid = '#CFC9BA';
+    var stoneLight = '#E2DCCE';
+    var stoneDark = '#A0998C';
+
+    // 台座
+    var pad = mesh(new THREE.CylinderGeometry(0.52 * s, 0.6 * s, 0.1 * s, 8), stoneDark);
+    pad.position.y = 0.05 * s;
+    g.add(pad);
+
+    // 柱身：分段（下粗上细）+ 中段加一圈装饰环
+    var lower = mesh(new THREE.CylinderGeometry(0.18 * s, 0.24 * s, 0.62 * s, 8), stoneLight);
+    lower.position.y = 0.41 * s;
+    g.add(lower);
+    var ring = mesh(new THREE.CylinderGeometry(0.26 * s, 0.26 * s, 0.08 * s, 8), stoneMid);
+    ring.position.y = 0.72 * s;
+    g.add(ring);
+    var upper = mesh(new THREE.CylinderGeometry(0.15 * s, 0.18 * s, 0.5 * s, 8), stoneLight);
+    upper.position.y = 1.0 * s;
+    g.add(upper);
+
+    // 中台（承接灯室）
+    var midBase = mesh(new THREE.CylinderGeometry(0.42 * s, 0.3 * s, 0.12 * s, 8), stoneMid);
+    midBase.position.y = 1.3 * s;
+    g.add(midBase);
+
+    // 灯室：四角柱 + 三面开窗（自发光）
+    var room = mesh(new THREE.BoxGeometry(0.62 * s, 0.5 * s, 0.62 * s), stoneMid);
+    room.position.y = 1.61 * s;
+    g.add(room);
+    // 发光窗：三面（正面 + 两个侧面），用高亮自发光
+    var winMat = G.celMaterial('#FFE9A8', {
+      steps: 2, darkness: 1.0,
+      emissive: '#FFD878', emissiveIntensity: 1.15
+    });
+    [[0, 0.32], [0.32, 0], [-0.32, 0]].forEach(function (off) {
+      var win = new THREE.Mesh(new THREE.BoxGeometry(0.34 * s, 0.28 * s, 0.34 * s), winMat);
+      if (off[0] !== 0) win.position.set(off[0] * s, 1.61 * s, 0);
+      else win.position.set(0, 1.61 * s, off[1] * s);
+      // 压扁成"窗"的厚度
+      if (off[0] !== 0) win.scale.x = 0.06;
+      else win.scale.z = 0.06;
+      g.add(win);
+    });
+
+    // 顶盖：双层四坡，深色压住上沿
+    var eave1 = mesh(new THREE.ConeGeometry(0.66 * s, 0.26 * s, 4), stoneDark);
+    eave1.position.y = 1.94 * s;
+    eave1.rotation.y = Math.PI / 4;
+    g.add(eave1);
+    var eave2 = mesh(new THREE.ConeGeometry(0.5 * s, 0.2 * s, 4), stoneMid);
+    eave2.position.y = 2.1 * s;
+    eave2.rotation.y = Math.PI / 4;
+    g.add(eave2);
+
+    // 宝顶
+    var finial = mesh(new THREE.SphereGeometry(0.1 * s, 6, 5), stoneLight);
+    finial.position.y = 2.26 * s;
+    g.add(finial);
+
+    var pl = new THREE.PointLight(0xFFE0A0, 0.9, 5.5, 2);
+    pl.position.y = 1.61 * s;
     g.add(pl);
     g.userData.light = pl;
     return g;

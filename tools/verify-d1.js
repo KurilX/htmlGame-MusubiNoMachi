@@ -289,15 +289,22 @@ async function run(cdp, check, results) {
     type: 'keyDown', code: 'ShiftLeft', key: 'Shift',
     windowsVirtualKeyCode: 16, nativeVirtualKeyCode: 16, modifiers: 8
   });
-  // 等真实 rAF 跑（不要自己推帧，否则会和它抢）
-  await sleep(300);
+  // 等真实 rAF 跑。
+  // 【flaky 修复】原来固定 sleep(300) 偶尔不够：headless 下 rAF 节流后
+  // 某帧可能刚好跨过采样点，导致 called=false 假失败。
+  // 改为轮询等待探针置位（最多 2 秒），这才是稳定做法。
+  let dodgeCalled = false;
+  for (let i = 0; i < 40; i++) {
+    await sleep(50);
+    dodgeCalled = await cdp.eval(`window.__dodgeCalled === true`);
+    if (dodgeCalled) break;
+  }
   const dodgeResult = await cdp.eval(`({
     called: window.__dodgeCalled,
     timer: G.player.state.dodge.timer,
     cd: G.player.state.dodge.cd,
     dead: G.player.state.dead,
     keysDodge: !!G.input.keys.dodge,
-    enabled: G.input.enabled,
     hasRaw: !!G.player.__rawDodge,
     sameFn: G.player.dodge === G.player.__rawDodge
   })`);
@@ -309,7 +316,6 @@ async function run(cdp, check, results) {
     'called=' + dodgeResult.called + ' cd=' + (dodgeResult.cd || 0).toFixed(2) +
     ' keys=' + dodgeResult.keysDodge + ' dead=' + dodgeResult.dead +
     ' patchOK=' + (dodgeResult.hasRaw && !dodgeResult.sameFn));
-
   // ---- 9. 升级 ----
   await cdp.eval(`G.player.gainExp(200)`);
   await sleep(200);

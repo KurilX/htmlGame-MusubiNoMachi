@@ -421,6 +421,17 @@
       obj.userData.spec = spec;
       obj.userData.baseY = obj.position.y;
       obj.userData.floatPhase = Math.random() * 6.28;
+
+      // 烘焙接地 AO：越贴近地面的部分越暗。
+      // 这是"告别纯色块简约感"最有效的一步——没有接触阴影，
+      // 物体看起来像贴纸浮在绿布上。
+      // falloff 由 bakeContactAO 内部按物体高度自动算（踩过：写死会烧黑细高物体）。
+      if (spec.type !== 'water' && spec.type !== 'path' &&
+          spec.type !== 'pagoda' && spec.type !== 'knot' && spec.type !== 'gate') {
+        W.bakeContactAO(obj, W.groundY(spec.x, spec.z), {
+          strength: spec.type === 'house' ? 0.38 : 0.42
+        });
+      }
     }
     return obj;
   };
@@ -517,6 +528,71 @@
     flowers.instanceColor.needsUpdate = true;
     W.scene.add(flowers);
     W.vegetation.flowers = flowers;
+  };
+
+  /**
+   * 给一组几何体烘焙"接地 AO"：越靠近地面越暗。
+   *
+   * 为什么用顶点色而不是 SSAO：
+   *   SSAO 需要额外 G-Buffer + 多次采样，在 640x360 上每帧都是明显的开销，
+   *   而且 file:// 单文件下没有后处理链可用。顶点色烘焙是零运行时成本，
+   *   且这类"物体与地面的接触阴影"本来就是静态的，烘一次就够。
+   *
+   * 【踩过的坑：AO 把细高物体烧黑】
+   * 初版对石灯笼/竹子也用了 falloff=1.3、strength=0.5。这两类物体
+   * 整体高度只有 1~2 单位，顶点几乎全部落在 falloff 之内，
+   * AO 系数接近 0.5，再叠加 Toon 暗部 -> 渲染成黑灰色块。
+   * 正确做法：falloff 必须与物体自身高度成比例，
+   * 只让"真正贴地的那一小段"变暗。
+   *
+   * @param {THREE.Group} group
+   * @param {number} groundY 该物件所在地面高度
+   * @param {object} opt { strength, falloff, height }
+   */
+  W.bakeContactAO = function (group, groundY, opt) {
+    opt = opt || {};
+    var strength = opt.strength != null ? opt.strength : 0.5;
+
+    // 先量出这个 group 的实际高度范围
+    var box = new THREE.Box3().setFromObject(group);
+    var groupHeight = Math.max(0.5, box.max.y - (groundY || 0));
+
+    // falloff 默认取高度的 22%，最少 0.35：
+    // 这样只有底部一小圈被压暗，不会把整个物体烧掉。
+    var falloff = opt.falloff != null
+      ? opt.falloff
+      : Math.max(0.35, groupHeight * 0.22);
+
+    group.traverse(function (node) {
+      if (!node.isMesh || !node.geometry) return;
+      var geo = node.geometry;
+      if (geo.attributes.color) return;   // 已经烘过
+
+      var pos = geo.attributes.position;
+      if (!pos) return;
+
+      node.updateMatrixWorld(true);
+      var colors = new Float32Array(pos.count * 3);
+      var v = new THREE.Vector3();
+
+      for (var i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        v.applyMatrix4(node.matrixWorld);
+        var h = v.y - groundY;
+        var t = G.M.clamp01(h / falloff);
+        // 平滑衰减：只有最底部接近 1-strength
+        var ao = 1 - strength * (1 - t) * (1 - t);
+        colors[i * 3] = ao;
+        colors[i * 3 + 1] = ao;
+        colors[i * 3 + 2] = ao;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      if (node.material && !node.material.vertexColors) {
+        node.material.vertexColors = true;
+        node.material.needsUpdate = true;
+      }
+    });
   };
 
   // ---------- 碰撞体（手工简单形状，够用且快） ----------
