@@ -61,13 +61,18 @@
       I.mouse.down = false;
     });
 
-    canvas.addEventListener('mousemove', function (e) {
+    // 鼠标事件绑在 window 上而不是 canvas 上：
+    // #ui 是全屏覆盖层（pointer-events:none 只对"没有 auto 的子元素"生效），
+    // 绑 canvas 的话点击会被 UI 层吃掉 —— 踩过：点击画面完全不打怪。
+    window.addEventListener('mousemove', function (e) {
       I.mouse.x = e.clientX;
       I.mouse.y = e.clientY;
     });
 
-    canvas.addEventListener('mousedown', function (e) {
+    window.addEventListener('mousedown', function (e) {
       if (!I.enabled) return;
+      // 点到会拦截指针的 UI（面板/对话框按钮）时，不当作游戏输入
+      if (isUiTarget(e.target)) return;
       mouseDownButtons[e.button] = true;
       if (e.button === 0) { I.mouse.down = true; I.mouse.clicked = true; }
       if (e.button === 2) { I.mouse.rightClicked = true; }
@@ -79,14 +84,25 @@
       if (e.button === 0) I.mouse.down = false;
     });
 
-    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    window.addEventListener('contextmenu', function (e) {
+      if (isUiTarget(e.target)) return;
+      e.preventDefault();
+    });
 
     window.addEventListener('wheel', function (e) {
       if (!I.enabled) return;
+      if (isUiTarget(e.target)) return;
       I.wheel += Math.sign(e.deltaY);
       e.preventDefault();
     }, { passive: false });
   };
+
+  /** 判断事件目标是否是"要吃指针的 UI" */
+  function isUiTarget(el) {
+    if (!el || !el.closest) return false;
+    // 这些容器里的东西是玩家要点的，不能当游戏输入
+    return !!el.closest('.overlay, .dialog, .dlg-choice, .sr-buy, .bagitem, .dlg-choices');
+  }
 
   /** 每帧末尾调用，清空"刚按下"状态 */
   I.endFrame = function () {

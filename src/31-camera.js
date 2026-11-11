@@ -96,7 +96,10 @@
 
   C.screenToGround = function (screenX, screenY) {
     if (!C.cam) return { x: 0, z: 0 };
-    // canvas 在屏幕上的实际区域（有黑边居中）
+    // 关键：raycaster 依赖相机的世界矩阵。update() 里只改了 position/lookAt，
+    // 矩阵要到下一次渲染才刷新，这里必须手动强制更新，
+    // 否则鼠标指向会用到上一帧的相机（踩过：攻击朝向差了 135°）
+    C.cam.updateMatrixWorld(true);
     var canvas = G.pixels.renderer.domElement;
     var rect = canvas.getBoundingClientRect();
     _ndc.x = ((screenX - rect.left) / rect.width) * 2 - 1;
@@ -110,6 +113,8 @@
   /** 世界坐标 -> 屏幕像素（用于伤害数字的锚定） */
   C.worldToScreen = function (wx, wy, wz) {
     if (!C.cam) return { x: 0, y: 0 };
+    // 同样要强制刷新矩阵，否则伤害数字会飘（用上一帧相机）
+    C.cam.updateMatrixWorld(true);
     var v = new THREE.Vector3(wx, wy, wz);
     v.project(C.cam);
     var canvas = G.pixels.renderer.domElement;

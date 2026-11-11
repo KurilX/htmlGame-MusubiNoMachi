@@ -378,7 +378,13 @@
   /** 直接改几何体的 uv 到指定方向/行 */
   function setFrame(mesh, dir, row) {
     var atlas = mesh.userData.atlas;
+    if (!atlas) {
+      // 防御：临时 mesh（残影/预览）忘了挂 atlas 时不要崩
+      console.warn('[chibi] setChibiFrame called without atlas');
+      return;
+    }
     var uv = mesh.geometry.attributes.uv;
+    if (!uv) return;
     var sx = 1 / atlas.cols;
     var sy = 1 / atlas.rows;
     var u0 = dir * sx;
@@ -390,6 +396,8 @@
     uv.setXY(2, u0, v0);
     uv.setXY(3, u0 + sx, v0);
     uv.needsUpdate = true;
+    // 防御：临时 mesh（残影）可能没有 uvState 字段
+    if (!mesh.userData.uvState) mesh.userData.uvState = { dir: 0, row: 0 };
     mesh.userData.uvState.dir = dir;
     mesh.userData.uvState.row = row;
   }

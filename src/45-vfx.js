@@ -155,7 +155,7 @@
   // 角色残影（chibi 立绘的淡出副本）
   // =====================================================================
   V.ghost = function (x, z, atlas, facing, phase, frame) {
-    if (!atlas) return;
+    if (!atlas || !atlas.frames) return;
     var mat = new THREE.MeshBasicMaterial({
       map: atlas.tex,
       transparent: true,
@@ -167,6 +167,9 @@
     var w = 2.05 * (atlas.cw / atlas.ch);
     var m = new THREE.Mesh(new THREE.PlaneGeometry(w, 2.05), mat);
     m.position.set(x, 1.02, z);
+    // 关键：setChibiFrame 从 mesh.userData.atlas 读 w/h 信息，
+    // 残影是临时 mesh，必须挂上去（踩过：不挂 -> atlas undefined -> 报错）
+    m.userData.atlas = atlas;
     var dir8 = G.sprite.dir8FromAngle(facing, G.camera.yaw);
     var info = atlas.frames[phase] || atlas.frames.idle;
     G.setChibiFrame(m, dir8, info.startRow + (frame % info.count));

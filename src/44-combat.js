@@ -189,19 +189,26 @@
   };
 
   // ---------- 命中停顿 ----------
+  var HITSTOP_MAX = 0.2;   // 单次停顿上限，超过必然是 bug
+
   G.hitstop = {
     timer: 0,
     trigger: function (sec) {
+      // 钳制：防止某次调用传了巨大的值把游戏永久冻住
+      if (!isFinite(sec) || sec <= 0) return;
+      var clamped = Math.min(sec, HITSTOP_MAX);
       // 取较长的那个，避免重复触发叠加过久
-      if (sec > this.timer) this.timer = sec;
+      if (clamped > this.timer) this.timer = clamped;
     },
     update: function (dt) {
       if (this.timer > 0) {
         this.timer -= dt;
+        if (this.timer < 0) this.timer = 0;
         return true;   // 表示这一帧处于停顿
       }
       return false;
-    }
+    },
+    reset: function () { this.timer = 0; }
   };
 
 })(window.G = window.G || {});

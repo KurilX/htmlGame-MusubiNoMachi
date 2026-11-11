@@ -318,21 +318,26 @@
     var crit = Math.random() < st.crit;
     if (crit) dmg *= st.critMult;
 
-    G.combat.slash({
+    // 踩过的坑：曾调用不存在的 G.combat.slash()，普攻静默失效。
+    // 普攻就是一次扇形判定 + 挥击特效。
+    var hits = G.combat.cone({
       x: st.x, z: st.z,
       angle: st.facing,
       arc: Math.PI * 0.75,
       radius: 2.3,
       damage: dmg,
       crit: crit,
+      critMult: st.critMult,
       source: 'player',
       knockback: 3.2,
+      hitstopMs: crit ? 70 : 45,
       element: 'blade'
     });
 
     G.player.flashAttackVfx(st.x, st.z, st.facing);
     G.bus.emit('sfx', crit ? 'hit_crit' : 'slash');
     G.camera.shakeAdd(crit ? 0.28 : 0.16, 0.12);
+    return hits;
   };
 
   /** 挥刀特效：一个扇形拖影 */

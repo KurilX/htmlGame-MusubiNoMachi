@@ -125,7 +125,6 @@
     // 固定步长物理
     MAIN.accumulator += rawDt;
     var steps = 0;
-    var inHitstop = G.hitstop.timer > 0;
 
     while (MAIN.accumulator >= G.FIXED_DT && steps < 5) {
       var dt = G.FIXED_DT;
@@ -133,7 +132,11 @@
       steps++;
 
       if (!MAIN.paused) {
-        step(dt, inHitstop);
+        // 关键：hitstop 状态必须每步重新判断。
+        // 踩过的大坑：曾经在 while 外面算一次 inHitstop 传进来，
+        // 结果第一次命中产生 hitstop 之后，外层变量一直是 true，
+        // player.update 被永久跳过 —— 玩家角色从此不再响应任何输入。
+        step(dt);
       }
     }
 
@@ -144,14 +147,16 @@
     G.input.endFrame();
   }
 
-  function step(dt, inHitstop) {
+  function step(dt) {
     MAIN.elapsed += dt;
     var st = G.player.state;
 
-    // 命中停顿：跳过世界推进，但保留输入与 UI
+    // 命中停顿：世界不推进，但输入收集与 UI 仍要跑，
+    // 否则 hitstop 期间按下的键会丢
+    var frozen = G.hitstop.timer > 0;
     G.hitstop.update(dt);
 
-    if (!inHitstop) {
+    if (!frozen) {
       // 玩家
       G.player.update(dt, G.input, G.camera);
 
@@ -204,13 +209,19 @@
 
   /**
    * 供自动化测试/调试用的单步推进。
-   * headless 环境下 rAF 不触发，用它手动跑游戏逻辑。
+   * headless 环境下 rAF 会被节流，用它手动跑游戏逻辑。
+   *
+   * 注意：默认不清空 input.pressed —— 连续推帧时，
+   * 第一次推帧消费掉"刚按下"之后，后续帧不该再重复触发。
+   * 所以这里由调用方决定（clearInput 默认 true，与真实 rAF 行为一致）。
+   *
    * @param {number} dt 秒
+   * @param {boolean} clearInput 是否在末尾清空 pressed/clicked
    */
-  G.tickOnce = function (dt) {
+  G.tickOnce = function (dt, clearInput) {
     if (!G.world || !G.player.state) return;
-    if (!MAIN.paused) step(dt, false);
-    G.input.endFrame();
+    if (!MAIN.paused) step(dt);
+    if (clearInput !== false) G.input.endFrame();
   };
 
   // =====================================================================
