@@ -91,14 +91,17 @@
     } else {
       cw = w; ch = Math.round(w / targetAspect);
     }
-    // 整数倍 nearest 放大：先整除，避免非整数缩放导致的像素扭曲
+    // 缩放策略。
+    //
+    // 内部分辨率提到 1152x648 后，实际显示器很少能有 2 倍以上的整数倍空间
+    // （1080p 上只有 1.67 倍），所以这里改成：
+    //   - 优先取能整除的整数倍（>=1）
+    //   - 若整数倍导致画面明显小于窗口（>15% 空隙），改用浮点倍填满
+    // 浮点缩放时 imageRendering:pixelated 仍会保持硬边，
+    // 不会像以前那样出现"只占屏幕一角"。
     var s = Math.max(1, Math.floor(cw / G.INTERNAL_W));
-    // 兜底：窗口比 640 还小时（或 headless 报了个小尺寸），
-    // 允许用小数倍把画面撑满，避免只占屏幕一角
-    if (s < 1) s = cw / G.INTERNAL_W;
     var dispW = Math.round(G.INTERNAL_W * s);
     var dispH = Math.round(G.INTERNAL_H * s);
-    // 若整除后明显小于容器（>15% 空隙），用浮点倍填满
     if (dispW < cw * 0.85) {
       s = cw / G.INTERNAL_W;
       dispW = cw;

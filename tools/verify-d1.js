@@ -209,10 +209,11 @@ async function run(cdp, check, results) {
 
   // ---- 6. 真实鼠标攻击（点怪物脚下所在屏幕位置）----
   //
-  // 关键：必须用 y=0（脚下）投影到屏幕再点回地面。
-  // 踩过：用 y=1.2（胸口高度）投影，屏幕点反投回 y=0 平面时
-  // 存在 35° 俯角视差，地面点会偏离怪物 1.3 单位，导致朝向差 72°、打不中。
-  // 这是测试写法问题，不是游戏 bug。
+  // 关键 1：必须用 y=0（脚下）投影到屏幕再点回地面。
+  //   用 y=1.2（胸口）投影，反投 y=0 平面会有俯角视差，地面点偏 1.3 单位。
+  // 关键 2：分辨率提到 1152x648 后，同样的世界距离对应更多屏幕像素，
+  //   点击坐标可能落到画布外。这里先校验坐标在画布范围内，
+  //   超出就调整玩家位置。
   const combatBefore = await cdp.eval(`(function(){
     var st = G.player.state;
     var e = G.enemy.list[0];
@@ -224,10 +225,16 @@ async function run(cdp, check, results) {
     st.facing = Math.atan2(e.x - st.x, e.z - st.z);
     G.camera.follow.x = st.x;
     G.camera.follow.z = st.z;
-    G.camera.update(0.016, { x: st.x, z: st.z, y: 0.6 });
-    // y=0：脚下，反投影回地面才不会有视差
+    G.camera.update(0.016, { x: st.x, z: st.z, y: G.world.groundY(st.x, st.z) + 0.6 });
+    G.camera.cam.updateMatrixWorld(true);
     var p = G.camera.worldToScreen(e.x, 0, e.z);
-    return { id: e.id, hp: e.hp, sx: p.x, sy: p.y };
+    var r = G.pixels.renderer.domElement.getBoundingClientRect();
+    return {
+      id: e.id, hp: e.hp, sx: p.x, sy: p.y,
+      rect: { left: r.left, top: r.top, w: r.width, h: r.height },
+      inBounds: p.x >= r.left && p.x <= r.left + r.width &&
+                p.y >= r.top && p.y <= r.top + r.height
+    };
   })()`);
 
   if (combatBefore) {

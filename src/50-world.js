@@ -691,9 +691,9 @@
       var def = G.DATA.NPCS[i];
       var look = G.makeLook(def.look);
       var atlas = G.getChibiAtlas(look, def.id);
-      var m = G.makeChibiMesh(atlas, { worldH: 2.1 });
+      var m = G.makeChibiMesh(atlas, { worldH: 2.45 });
       var sp = W.isNight() ? def.night : def.day;
-      m.position.set(sp.x, W.groundY(sp.x, sp.z) + 1.05, sp.z);
+      m.position.set(sp.x, W.groundY(sp.x, sp.z) + 1.225, sp.z);
       W.scene.add(m);
       var npc = {
         def: def, look: look, atlas: atlas, mesh: m,
@@ -716,7 +716,7 @@
       npc.x = target.x; npc.z = target.z;
       npc.mesh.position.x = target.x;
       npc.mesh.position.z = target.z;
-      npc.mesh.position.y = W.groundY(target.x, target.z) + 1.05;
+      npc.mesh.position.y = W.groundY(target.x, target.z) + 1.225;
     }
   };
 

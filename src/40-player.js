@@ -20,7 +20,7 @@
     var atlas = G.getChibiAtlas(look, 'player');
     P.atlas = atlas;
 
-    var mesh = G.makeChibiMesh(atlas, { worldH: 2.05 });
+    var mesh = G.makeChibiMesh(atlas, { worldH: 2.5 });
     P.mesh = mesh;
     G.world.scene.add(mesh);
 
@@ -229,14 +229,16 @@
 
     mesh.position.x = st.x;
     mesh.position.z = st.z;
-    // 贴地：脚下高度 + 半身高
+    // 贴地：脚下高度 + 半身高。
+    // 注意：半身高必须与世界高度（2.5）一致，否则角色陷地/浮空。
+    // 踩过：worldH 从 2.05 改到 2.5 时忘了同步这里，角色半截入土。
     var gy = G.world.groundY(st.x, st.z);
-    // 死亡时下沉
-    mesh.position.y = st.dead ? gy + 0.55 : gy + 1.02;
+    var halfH = 1.25;   // = worldH / 2
+    mesh.position.y = st.dead ? gy + 0.6 : gy + halfH;
 
     // 翻滚时压扁提示
     if (st.dodge.timer > 0) {
-      mesh.position.y = gy + 0.78;
+      mesh.position.y = gy + 0.9;
     }
 
     var dir8 = G.sprite.dir8FromAngle(st.facing, G.camera.yaw);

@@ -330,7 +330,7 @@
         var ny = (h / (nodes + 1)) * n;
         var ring = mesh(
           new THREE.CylinderGeometry(r * 1.16, r * 1.16, 0.09, 6),
-          '#C8DCA8', { steps: 2, darkness: 0.92 }
+          '#C8DCA8', { steps: 3, darkness: 0.92 }
         );
         ring.position.set(px, ny, pz);
         g.add(ring);
@@ -346,7 +346,7 @@
         for (var k = 0; k < 3; k++) {
           var leaf = mesh(
             new THREE.PlaneGeometry(0.85, 0.22),
-            lc, { side: THREE.DoubleSide, steps: 2, darkness: 0.88 }
+            lc, { side: THREE.DoubleSide, steps: 3, darkness: 0.88 }
           );
           // 从竿上向外斜伸
           var ang = ca + (k - 1) * 0.45;
@@ -366,7 +366,7 @@
       // 竹冠：一个扁球给出绿色体量（不然顶上全是空线）
       var crown = mesh(
         new THREE.IcosahedronGeometry(0.62 + rnd() * 0.26, 0),
-        '#93B472', { steps: 2, darkness: 0.84 }
+        '#93B472', { steps: 3, darkness: 0.84 }
       );
       crown.position.set(px, h + 0.1, pz);
       crown.scale.set(1, 0.62, 1);
@@ -426,7 +426,7 @@
       var r = 0.28 + rnd() * 0.22;
       var b = mesh(new THREE.IcosahedronGeometry(r, 0),
         rnd() > 0.5 ? G.PALETTE.grass : G.PALETTE.grassDim,
-        { steps: 2, darkness: 0.65 });
+        { steps: 3, darkness: 0.65 });
       b.position.set((rnd() - 0.5) * 0.6, r * 0.7, (rnd() - 0.5) * 0.6);
       b.scale.y = 0.8;
       g.add(b);
@@ -596,7 +596,7 @@
         g.add(leaf);
       }
       var flower = mesh(new THREE.IcosahedronGeometry(0.14, 0), opt.color || '#E8A0B8',
-        { steps: 2, darkness: 0.7 });
+        { steps: 3, darkness: 0.7 });
       flower.position.y = 0.42;
       g.add(flower);
     } else if (type === 'ore') {
@@ -643,7 +643,7 @@
     });
 
     var mat = G.celMaterial('#FFFFFF', {
-      steps: 2,
+      steps: 3,
       darkness: 0.82,
       map: tex
     });
@@ -682,7 +682,7 @@
       var h = 1.5 * (1 - t * 0.22);
 
       var body = mesh(new THREE.BoxGeometry(w, h, w), bodyColor,
-        { steps: 2, darkness: 0.88 });
+        { steps: 3, darkness: 0.88 });
       body.position.y = y + h / 2;
       g.add(body);
 
@@ -692,7 +692,7 @@
       var eaveW = w + 0.9;
       for (var k = 0; k < 2; k++) {
         var eave = mesh(new THREE.BoxGeometry(eaveW, 0.2, eaveW * 0.58),
-          roofColor, { steps: 2, darkness: 0.9 });
+          roofColor, { steps: 3, darkness: 0.9 });
         eave.position.y = y + h + 0.1;
         eave.rotation.y = k * Math.PI / 2;
         g.add(eave);
@@ -701,7 +701,7 @@
       for (var s = 0; s < 4; s++) {
         var a = s * Math.PI / 2 + Math.PI / 4;
         var tip = mesh(new THREE.BoxGeometry(0.6, 0.16, 0.6), roofColor,
-          { steps: 2, darkness: 0.9 });
+          { steps: 3, darkness: 0.9 });
         tip.position.set(
           Math.cos(a) * eaveW * 0.4,
           y + h + 0.22,
@@ -731,7 +731,7 @@
     g.add(spire);
     for (var r = 0; r < 4; r++) {
       var ring = mesh(new THREE.TorusGeometry(0.42 - r * 0.06, 0.07, 4, 10),
-        G.PALETTE.gold, { steps: 2, darkness: 0.85 });
+        G.PALETTE.gold, { steps: 3, darkness: 0.85 });
       ring.rotation.x = Math.PI / 2;
       ring.position.y = y + 0.5 + r * 0.55;
       g.add(ring);
@@ -833,7 +833,7 @@
       var blade = mesh(
         new THREE.PlaneGeometry(0.11, h),
         col,
-        { side: THREE.DoubleSide, steps: 2, darkness: 0.9 }
+        { side: THREE.DoubleSide, steps: 3, darkness: 0.9 }
       );
       var a = (i / 3) * Math.PI + (opt.seed || 0) * 0.3;
       blade.position.set(Math.cos(a) * 0.07, h / 2, Math.sin(a) * 0.07);
@@ -854,7 +854,7 @@
     stem.position.y = 0.15;
     g.add(stem);
     var head = mesh(new THREE.IcosahedronGeometry(0.11, 0), col,
-      { steps: 2, darkness: 0.88 });
+      { steps: 3, darkness: 0.88 });
     head.position.y = 0.34;
     g.add(head);
     return g;
@@ -932,7 +932,7 @@
     opt = opt || {};
     var tex = W.grassTexture({ base: colorHex, repeat: opt.repeat || 6, seed: opt.seed || 5 });
     return G.celMaterial('#FFFFFF', {
-      steps: 2,
+      steps: 3,
       darkness: 0.76,
       map: tex
     });

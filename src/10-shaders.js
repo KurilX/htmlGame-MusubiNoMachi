@@ -16,23 +16,29 @@
 
   /**
    * 生成阶梯渐变贴图（Toon 的 gradientMap）。
+   *
+   * 色阶数量的选择（实测对比过 2/3/4 阶）：
+   *   2 阶：只有亮/暗两档 -> 物体像平面色块，这是"简约感"的主要来源
+   *   3 阶：亮/中间调/暗 -> 体积感出来了，同时保持赛璐璐的硬边质感【当前】
+   *   4 阶：更接近普通光照，开始丢失卡通硬边，不推荐
+   *
    * @param {number} steps 色阶数
-   * @param {number} darkness 暗部保留的亮度 0..1（越小越硬、越暗）
+   * @param {number} darkness 暗部保留的亮度 0..1
    */
   G.gradientMap = function (steps, darkness) {
-    steps = steps || 2;
-    darkness = darkness == null ? 0.72 : darkness;
+    steps = steps || 3;
+    darkness = darkness == null ? 0.62 : darkness;
     var key = steps + ':' + darkness;
     if (_gradCache[key]) return _gradCache[key];
 
-    var w = 32;
+    var w = 64;
     var data = new Uint8Array(w * 4);
     for (var i = 0; i < w; i++) {
       var t = i / (w - 1);
+      // 3 阶时把分界点稍微偏向暗部，让亮面更"亮"、中间调更窄，
+      // 这是动画片里常见的打光分布。
       var q = Math.floor(t * steps) / Math.max(1, steps - 1);
       q = Math.min(1, Math.max(0, q));
-      // 暗部不要压太死：从 darkness 抬到 1.0
-      // 踩过：darkness=0.5 时白墙变成灰墙，整个城镇像黄昏
       var v = Math.round((darkness + (1 - darkness) * q) * 255);
       data[i * 4] = v; data[i * 4 + 1] = v; data[i * 4 + 2] = v; data[i * 4 + 3] = 255;
     }
@@ -52,9 +58,10 @@
     opt = opt || {};
     var mat = new THREE.MeshToonMaterial({
       color: new THREE.Color(baseHex),
+      // 默认 3 阶：2 阶会让物体看起来像平面色块（这是"简约感"的主要来源）
       gradientMap: G.gradientMap(
-        opt.steps != null ? opt.steps : 2,
-        opt.darkness != null ? opt.darkness : 0.72
+        opt.steps != null ? opt.steps : 3,
+        opt.darkness != null ? opt.darkness : 0.62
       ),
       side: opt.side || THREE.FrontSide,
       transparent: !!opt.transparent,
@@ -71,6 +78,17 @@
       mat.emissiveIntensity = opt.emissiveIntensity != null ? opt.emissiveIntensity : 1;
     }
     mat.userData.baseHex = baseHex;
+
+    // 彩色阴影：把"暗部 = 颜色变暗"换成"暗部 = 更冷更饱和"。
+    // 这是消除"发灰发脏"的关键（详见 12b-celshade.js 的说明）。
+    // 发光材质不需要（它的暗部本来就该是暗的）。
+    if (opt.coloredShade !== false && opt.emissive == null && G.applyColoredShade) {
+      G.applyColoredShade(mat, {
+        hueShift: opt.shadeHue,
+        satBoost: opt.shadeSat
+      });
+    }
+
     return mat;
   };
 
@@ -165,7 +183,7 @@
         uTexel: { value: new THREE.Vector2(1 / G.INTERNAL_W, 1 / G.INTERNAL_H) },
         uOutlineOn: { value: 1.0 },
         uOutlineColor: { value: new THREE.Color(G.PALETTE.inkBrown) },
-        uDepthThreshold: { value: 0.045 },
+        uDepthThreshold: { value: 0.045 * (640 / G.INTERNAL_W) },
         uLumThreshold: { value: 0.14 },
         uNear: { value: 0.1 },
         uFar: { value: 200.0 }
@@ -181,12 +199,15 @@
   //
   // depthThreshold 的调参史（很重要，别随手改小）：
   //   0.010 ~ 0.016  细长物体（竹竿、灯柱）整根被判定成边缘 -> 渲染成黑线。
-  //                  原因是 640x360 下竹竿只有 3~4 像素宽，深度梯度天然很大。
-  //   0.045          实测最优：轮廓清晰、细物体保色。
-  //   0.070+         边缘开始漏判，物体轮廓变淡。
+  //                  原因是低分辨率下竹竿只有 3~4 像素宽，深度梯度天然很大。
+  //   0.045          640x360 下的最优值。
+  //   0.022          1152x648 下的对应值：分辨率提高 1.8 倍后，
+  //                  同样物理宽度的物体在像素空间里更宽，梯度更平缓，
+  //                  所以阈值要按比例减小。
+  // 经验公式：depthThreshold ≈ 0.045 * (640 / INTERNAL_W)
   G.outlineParams = {
     on: true,
-    depthThreshold: 0.045,
+    depthThreshold: 0.045 * (640 / G.INTERNAL_W),
     lumThreshold: 0.14
   };
 
