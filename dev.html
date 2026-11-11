@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>結ノ町 — 开发版</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #111; }
+  canvas { display: block; image-rendering: pixelated; }
+  #boot { position: absolute; inset: 0; display: flex; align-items: center;
+          justify-content: center; color: #FBF3E4; font: 14px/1.6 system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<div id="boot">加载中…</div>
+<canvas id="gl"></canvas>
+
+<!-- 引擎 -->
+<script src="vendor/three.min.js"></script>
+
+<!-- 游戏模块：顺序重要 -->
+<script src="src/00-core.js"></script>
+<script src="src/10-shaders.js"></script>
+<script src="src/11-pixels.js"></script>
+
+<!-- 冒烟测试（先验证管线，稍后替换为正式 main） -->
+<script src="src/_smoke.js"></script>
+</body>
+</html>
