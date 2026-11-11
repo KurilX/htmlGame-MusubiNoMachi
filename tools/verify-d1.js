@@ -137,6 +137,60 @@ async function run(cdp, check, results) {
   check('按住 W 能移动（真实键盘事件）', moved > 1.5,
     'delta=' + moved.toFixed(2));
 
+  // ---- 3b. WASD 方向必须与屏幕一致 ----
+  //
+  // 【回归保护】曾经四个方向全部反向（手推正交相机基向量推错）。
+  // 这里把"相机钉住、只让角色动、投影回屏幕看位移方向"固化成断言，
+  // 避免以后改相机/改移动逻辑时再次搞反。
+  const DIR_CASES = [
+    { name: 'W', code: 'KeyW', key: 'w', vk: 87, want: 'up' },
+    { name: 'S', code: 'KeyS', key: 's', vk: 83, want: 'down' },
+    { name: 'A', code: 'KeyA', key: 'a', vk: 65, want: 'left' },
+    { name: 'D', code: 'KeyD', key: 'd', vk: 68, want: 'right' }
+  ];
+  let dirOk = 0;
+  const dirDetail = [];
+  for (const c of DIR_CASES) {
+    await cdp.eval(`(function(){
+      var st = G.player.state;
+      st.x = 0; st.z = 30; st.vx = 0; st.vz = 0;
+      G.camera.follow.x = 0; G.camera.follow.z = 30; G.camera.follow.y = 0.6;
+      G.camera.update(0.016, {x:0, z:30, y:0.6});
+      G.camera.cam.updateMatrixWorld(true);
+      window.__p0 = G.camera.worldToScreen(st.x, 0, st.z);
+    })()`);
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyDown', code: c.code, key: c.key, windowsVirtualKeyCode: c.vk
+    });
+    await cdp.eval(`(function(){
+      for (var i = 0; i < 36; i++) {
+        G.tickOnce(1/60);
+        // 相机钉死，否则跟随会把屏幕位移抵消掉
+        G.camera.follow.x = 0; G.camera.follow.z = 30; G.camera.follow.y = 0.6;
+      }
+    })()`);
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyUp', code: c.code, key: c.key, windowsVirtualKeyCode: c.vk
+    });
+    const d = await cdp.eval(`(function(){
+      var st = G.player.state;
+      G.camera.follow.x = 0; G.camera.follow.z = 30; G.camera.follow.y = 0.6;
+      G.camera.update(0.016, {x:0, z:30, y:0.6});
+      G.camera.cam.updateMatrixWorld(true);
+      var p1 = G.camera.worldToScreen(st.x, 0, st.z);
+      return { dx: p1.x - window.__p0.x, dy: p1.y - window.__p0.y };
+    })()`);
+    const dist = Math.hypot(d.dx, d.dy);
+    let ok = false;
+    if (c.want === 'up') ok = d.dy < -5 && dist > 10;
+    if (c.want === 'down') ok = d.dy > 5 && dist > 10;
+    if (c.want === 'left') ok = d.dx < -5 && dist > 10;
+    if (c.want === 'right') ok = d.dx > 5 && dist > 10;
+    if (ok) dirOk++;
+    dirDetail.push(c.name + '(' + d.dx.toFixed(0) + ',' + d.dy.toFixed(0) + ')');
+  }
+  check('WASD 方向与屏幕一致（防回归）', dirOk === 4, dirDetail.join(' ') + ' => ' + dirOk + '/4');
+
   // ---- 4. 走路动画 ----
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyD', key: 'd', windowsVirtualKeyCode: 68 });
   await pumpFrames(cdp, 12);

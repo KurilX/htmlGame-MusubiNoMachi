@@ -395,7 +395,7 @@ canvas#gl {
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
 </style>
-<!-- 构建产物：2026-11-11T08:34:39.037Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-11T08:52:56.260Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -3552,19 +3552,45 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     };
   };
 
-  /** 屏幕方向的意图 -> 世界方向（WASD 的屏幕相对移动） */
+  /**
+   * 屏幕方向的意图 -> 世界方向（WASD 的屏幕相对移动）。
+   *
+   * 【事故记录：方向完全反向】
+   * 初版是靠"看着 yaw 手推"写的：
+   *     var rx = -cos, rz = sin;   // 以为这是屏幕右
+   *     var fx = -sin, fz = -cos;  // 以为这是往画面里
+   * 实测（用相机世界矩阵取真实基向量对比）四个键全部反向：
+   *     W 走了 180° 反方向，D 也反了。
+   * 手推正交相机基向量太容易出错，改为直接读相机矩阵：
+   *   - 相机局部 +X 投到地面 = 屏幕右
+   *   - 相机局部 +Y 投到地面 = 画面上（即"往画面里走"）
+   * 这样无论 yaw 怎么变、相机怎么绕都不会再错。
+   */
+  var _m4 = new THREE.Matrix4();
+  var _vRight = new THREE.Vector3();
+  var _vUp = new THREE.Vector3();
+
   C.screenDirToWorld = function (sx, sz) {
-    // 相机 yaw 决定屏幕 X 轴在世界中的朝向
-    var cos = Math.cos(C.yaw), sin = Math.sin(C.yaw);
-    // 屏幕右 = (cos, -sin) 在 XZ 平面？推导：
-    // 相机在 (sin(yaw)*d, h, cos(yaw)*d) 看向原点，
-    // 屏幕上"右"在世界里是 (-cos(yaw), sin(yaw))？做一次正交验证：
-    var rx = -cos, rz = sin;      // 屏幕右
-    var fx = -sin, fz = -cos;     // 屏幕下（朝向玩家前方 = 远离相机）
-    var wx = rx * sx + fx * sz;
-    var wz = rz * sx + fz * sz;
-    var n = G.M.norm(wx, wz);
-    return n;
+    if (!C.cam) return { x: 0, z: 0 };
+    C.cam.updateMatrixWorld(true);
+
+    _m4.extractRotation(C.cam.matrixWorld);
+    // 屏幕右：相机局部 +X
+    _vRight.set(1, 0, 0).applyMatrix4(_m4);
+    // 画面上：相机局部 +Y（投到地面平面即为"往画面里"）
+    _vUp.set(0, 1, 0).applyMatrix4(_m4);
+
+    // 投到 XZ 平面并归一化
+    var rl = Math.hypot(_vRight.x, _vRight.z) || 1;
+    var ul = Math.hypot(_vUp.x, _vUp.z) || 1;
+    var rx = _vRight.x / rl, rz = _vRight.z / rl;
+    var fx = _vUp.x / ul, fz = _vUp.z / ul;
+
+    // sx = 屏幕右为正，sz = 屏幕下为正（W 传 -1，S 传 +1）
+    // 屏幕下 = 画面上取反
+    var wx = rx * sx + fx * (-sz);
+    var wz = rz * sx + fz * (-sz);
+    return G.M.norm(wx, wz);
   };
 
 })(window.G = window.G || {});
