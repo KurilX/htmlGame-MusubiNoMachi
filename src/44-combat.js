@@ -52,8 +52,12 @@
     if (e.dead) return 0;
     opts = opts || {};
 
-    var dmg = Math.max(1, damage - e.def * 0.6);
+    // 注意命名歧义：e.def 是怪物定义对象，e.defStat 才是防御数值。
+    // 踩过：写成 e.def * 0.6 -> 对象乘数字 -> NaN -> 敌人血量变 NaN。
+    var defense = e.defStat || 0;
+    var dmg = Math.max(1, damage - defense * 0.6);
     dmg = Math.round(dmg);
+    if (!isFinite(dmg)) dmg = Math.max(1, Math.round(damage) || 1);
 
     e.hp -= dmg;
     e.hitFlash = 0.2;

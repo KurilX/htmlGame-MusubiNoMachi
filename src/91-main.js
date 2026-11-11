@@ -202,6 +202,17 @@
     G.pixels.render(G.world.scene, G.camera.cam);
   }
 
+  /**
+   * 供自动化测试/调试用的单步推进。
+   * headless 环境下 rAF 不触发，用它手动跑游戏逻辑。
+   * @param {number} dt 秒
+   */
+  G.tickOnce = function (dt) {
+    if (!G.world || !G.player.state) return;
+    if (!MAIN.paused) step(dt, false);
+    G.input.endFrame();
+  };
+
   // =====================================================================
   // 交互（宝箱/碑文/结/采集/商店/NPC）
   // =====================================================================

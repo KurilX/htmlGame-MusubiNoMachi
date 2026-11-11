@@ -41,7 +41,8 @@
     var e = {
       id: E.nextId++,
       defId: defId,
-      def: def,
+      def: def,                 // 定义对象（只读）
+      defStat: def.def || 0,    // 防御数值（避免 e.def 命名歧义）
       x: x, z: z,
       hp: def.hp, maxHp: def.hp,
       radius: def.radius, height: def.height,

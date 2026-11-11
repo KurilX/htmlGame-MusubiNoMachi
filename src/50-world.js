@@ -28,12 +28,51 @@
   };
 
   // =====================================================================
+  // 昼夜判定（必须在 build 之前定义：buildNPCs 里会调用 isNight）
+  // =====================================================================
+  // timeOfDay: 0 = 午夜, 0.25 = 6:00 日出, 0.5 = 正午, 0.75 = 18:00 日落
+  var DAWN = 0.24, DUSK = 0.76;
+  var TRANS = 0.07;
+
+  W.isNight = function () {
+    var t = W.timeOfDay;
+    return t < DAWN || t > DUSK;
+  };
+
+  /**
+   * 夜色程度 0..1。0 = 正午全亮，1 = 深夜。
+   * 踩过的坑：最初写反过，导致 07:41 显示月亮图标、白天画面像黄昏。
+   */
+  W.nightFactor = function () {
+    var t = W.timeOfDay;
+    if (t < DAWN - TRANS) return 1;                       // 深夜
+    if (t < DAWN) return (DAWN - t) / TRANS;              // 黎明前
+    if (t < DAWN + TRANS) return 1 - (t - DAWN) / TRANS;  // 日出
+    if (t < DUSK - TRANS) return 0;                       // 白天
+    if (t < DUSK) return (t - (DUSK - TRANS)) / TRANS;    // 入夜
+    if (t < DUSK + TRANS) return 0.5 + ((t - DUSK) / TRANS) * 0.5;
+    return 1;
+  };
+
+  /** 黄昏/黎明程度（用于染色）0..1 */
+  W.duskFactor = function () {
+    var t = W.timeOfDay;
+    var a = 0;
+    if (t > DAWN - TRANS && t < DAWN + TRANS) {
+      a = 1 - Math.abs(t - DAWN) / TRANS;
+    }
+    if (t > DUSK - TRANS && t < DUSK + TRANS) {
+      a = Math.max(a, 1 - Math.abs(t - DUSK) / TRANS);
+    }
+    return G.M.clamp01(a);
+  };
+
+  // =====================================================================
   // 构建
   // =====================================================================
   W.build = function () {
     var scene = new THREE.Scene();
     W.scene = scene;
-
     // 天空色（按时间）
     scene.background = new THREE.Color(G.PALETTE.sky);
     // 雾：起点必须远大于相机到玩家的距离（相机距离 34），
@@ -395,50 +434,8 @@
   };
 
   // =====================================================================
-  // 昼夜
+  // 昼夜（isNight / nightFactor / duskFactor 定义在文件顶部，build 之前）
   // =====================================================================
-  // timeOfDay: 0 = 午夜, 0.25 = 6:00 日出, 0.5 = 正午, 0.75 = 18:00 日落
-  // 踩过的坑：最初 isNight 用 t>0.74||t<0.24，而 nightFactor 又写反，
-  // 导致 07:41 显示月亮图标、白天画面像黄昏。
-  var DAWN = 0.24, DUSK = 0.76;
-
-  W.isNight = function () {
-    var t = W.timeOfDay;
-    return t < DAWN || t > DUSK;
-  };
-
-  /**
-   * 夜色程度 0..1。
-   * 0 = 完全白天（正午），1 = 深夜。
-   * 日出/日落后各有 0.06 的过渡带。
-   */
-  W.nightFactor = function () {
-    var t = W.timeOfDay;
-    var TRANS = 0.07;
-    if (t < DAWN - TRANS) return 1;                    // 深夜
-    if (t < DAWN) return (DAWN - t) / TRANS;           // 黎明前
-    if (t < DAWN + TRANS) return 1 - (t - DAWN) / TRANS; // 日出
-    if (t < DUSK - TRANS) return 0;                    // 白天
-    if (t < DUSK) return (t - (DUSK - TRANS)) / TRANS;  // 入夜
-    if (t < DUSK + TRANS) return (t - DUSK) / TRANS > 1 ? 1 : (t - DUSK) / TRANS + 0.5;
-    return 1;
-  };
-
-  /** 黄昏/黎明程度（用于染色） 0..1 */
-  W.duskFactor = function () {
-    var t = W.timeOfDay;
-    var TRANS = 0.07;
-    var a = 0;
-    // 日出带
-    if (t > DAWN - TRANS && t < DAWN + TRANS) {
-      a = 1 - Math.abs(t - DAWN) / TRANS;
-    }
-    // 日落带
-    if (t > DUSK - TRANS && t < DUSK + TRANS) {
-      a = Math.max(a, 1 - Math.abs(t - DUSK) / TRANS);
-    }
-    return G.M.clamp01(a);
-  };
 
   W.updateDayNight = function (dt) {
     var prevNight = W.isNight();

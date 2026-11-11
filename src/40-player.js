@@ -31,10 +31,16 @@
     P.anim = G.sprite.createAnimator();
 
     var sp = G.DATA.WORLD.spawn;
+    // 注意：不能用 (x) || sp.x —— 坐标 0 是合法值，0 || sp.x 会误判。
+    // 必须显式判断 null/undefined。
+    function pick(saved, fallback) {
+      return (saved === null || saved === undefined) ? fallback : saved;
+    }
+    var savedPos = (saveData && saveData.position) || null;
     var st = {
       name: (saveData && saveData.name) || '旅人',
-      x: (saveData && saveData.position && saveData.position.x) || sp.x,
-      z: (saveData && saveData.position && saveData.position.z) || sp.z,
+      x: pick(savedPos && savedPos.x, sp.x),
+      z: pick(savedPos && savedPos.z, sp.z),
       facing: Math.PI,          // 世界角度：面向南（屏幕下方）
       vx: 0, vz: 0,
       speed: 7.4,
@@ -104,7 +110,12 @@
     st.atk = Math.round(baseAtk + bonus.atk);
     st.def = Math.round(baseDef + bonus.def);
     st.maxHp = Math.round(baseHp + bonus.hp);
-    st.crit = Math.min(0.75, st.critMultBase || 0.08 + bonus.crit);
+    // 踩过的坑：写成 Math.min(0.75, st.critMultBase || 0.08 + bonus.crit)
+    // 因为 || 优先级低于 +，实际算的是 (critMultBase || 0.08) + bonus.crit，
+    // 而且 st.critMult 从未被赋值 -> 暴击时 dmg *= undefined -> NaN
+    var baseCrit = 0.08;
+    st.crit = Math.min(0.75, Math.max(0, baseCrit + bonus.crit));
+    st.critMult = st.critMult != null ? st.critMult : 1.8;
     st.moveSpeedMul = 1 + bonus.speed;
     st.lifesteal = bonus.lifesteal;
     st.expNext = Math.round(40 * Math.pow(1.28, lv - 1));

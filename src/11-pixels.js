@@ -93,8 +93,17 @@
     }
     // 整数倍 nearest 放大：先整除，避免非整数缩放导致的像素扭曲
     var s = Math.max(1, Math.floor(cw / G.INTERNAL_W));
-    var dispW = G.INTERNAL_W * s, dispH = G.INTERNAL_H * s;
-    // 若整除后小于容器，允许用 css 拉伸填满（仍 nearest）
+    // 兜底：窗口比 640 还小时（或 headless 报了个小尺寸），
+    // 允许用小数倍把画面撑满，避免只占屏幕一角
+    if (s < 1) s = cw / G.INTERNAL_W;
+    var dispW = Math.round(G.INTERNAL_W * s);
+    var dispH = Math.round(G.INTERNAL_H * s);
+    // 若整除后明显小于容器（>15% 空隙），用浮点倍填满
+    if (dispW < cw * 0.85) {
+      s = cw / G.INTERNAL_W;
+      dispW = cw;
+      dispH = Math.round(G.INTERNAL_H * s);
+    }
     var canvas = P.renderer.domElement;
     canvas.width = G.INTERNAL_W;
     canvas.height = G.INTERNAL_H;
