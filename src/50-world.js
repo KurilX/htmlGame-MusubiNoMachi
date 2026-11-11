@@ -599,7 +599,9 @@
       if (spec.type === 'bamboo' && p.obj.userData.stalks) {
         for (var b = 0; b < p.obj.userData.stalks.length; b++) {
           var st = p.obj.userData.stalks[b];
-          st.mesh.rotation.z = st.baseRotZ + Math.sin(elapsed * 0.9 + st.phase) * 0.02;
+          var sway = Math.sin(elapsed * 0.9 + st.phase) * 0.02;
+          st.mesh.rotation.z = st.baseRotZ + sway;
+          if (st.baseRotX != null) st.mesh.rotation.x = st.baseRotX + sway * 0.6;
         }
       }
       if (spec.type === 'gate' && p.obj.userData.glow) {

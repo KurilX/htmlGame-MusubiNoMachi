@@ -232,41 +232,103 @@
   };
 
   // ---------- 竹林 ----------
+  //
+  // 踩过的坑（第一版很糟）：竹竿用 CylinderGeometry(r, r*1.15, h, 5) 深绿 5 面体，
+  // 在阴影里渲染成近乎纯黑的细竖条，完全读不出"竹子"；叶子是零散的深色小片飘在
+  // 半空像碎屑。整体像一堆黑线。
+  //
+  // 修法：
+  //  - 竹竿加粗、降低明度差、用明快的竹绿（#A8C583 系）而不是深苔绿
+  //  - 侧面数提到 6，保留方块感但不至于糊成黑条
+  //  - 叶子成簇挂在竹梢（V 形两片一组），贴着竿而不是乱飘
+  //  - 顶部加一圈"竹冠"矮球，给出绿色体量
   W.bamboo = function (opt) {
     opt = opt || {};
     var g = new THREE.Group();
     var rnd = G.mulberry32(opt.seed || 777);
     var count = opt.count || 7;
+    var spread = opt.spread || 1.6;
     var stalks = [];
+
+    // 竹绿的几档（都比原来的深苔绿亮）
+    var stalkColors = ['#A8C583', '#93B472', '#B8D094'];
+    var leafColors = ['#7FA85E', '#93B472', '#A8C583'];
+
     for (var i = 0; i < count; i++) {
-      var h = 4 + rnd() * 3.5;
-      var r = 0.07 + rnd() * 0.05;
-      var col = rnd() > 0.5 ? G.PALETTE.moss : G.PALETTE.mossDark;
-      var stalk = mesh(new THREE.CylinderGeometry(r, r * 1.15, h, 5), col);
+      var h = 3.6 + rnd() * 3.0;
+      // 半径 0.10 在 640x360 的等距远景里只有约 1.5 像素宽，
+      // 加上 1px 描边直接被吃掉 -> 渲染成黑线。
+      // 必须粗到 0.20~0.28（约 3~4 像素）才能读出体积。
+      var r = 0.21 + rnd() * 0.08;
+      var col = stalkColors[i % stalkColors.length];
       var a = rnd() * Math.PI * 2;
-      var rad = rnd() * (opt.spread || 1.6);
-      stalk.position.set(Math.cos(a) * rad, h / 2, Math.sin(a) * rad);
-      stalk.rotation.z = (rnd() - 0.5) * 0.12;
-      stalk.rotation.x = (rnd() - 0.5) * 0.12;
+      var rad = rnd() * spread;
+      var px = Math.cos(a) * rad;
+      var pz = Math.sin(a) * rad;
+
+      // 竹竿：6 面，略带锥度
+      var stalk = mesh(new THREE.CylinderGeometry(r * 0.86, r, h, 6), col,
+        { steps: 2, darkness: 0.86 });
+      stalk.position.set(px, h / 2, pz);
+      stalk.rotation.z = (rnd() - 0.5) * 0.09;
+      stalk.rotation.x = (rnd() - 0.5) * 0.09;
       g.add(stalk);
-      stalks.push({ mesh: stalk, baseRotZ: stalk.rotation.z, phase: rnd() * 6.28 });
-      // 竹节
-      var nodes = 2 + Math.floor(rnd() * 2);
+      stalks.push({
+        mesh: stalk,
+        baseRotZ: stalk.rotation.z,
+        baseRotX: stalk.rotation.x,
+        phase: rnd() * 6.28
+      });
+
+      // 竹节：比竿略粗一圈的竹青色环（用亮色，不然又是黑圈）
+      var nodes = 3 + Math.floor(rnd() * 2);
       for (var n = 1; n <= nodes; n++) {
-        var ring = mesh(new THREE.CylinderGeometry(r * 1.3, r * 1.3, 0.05, 5), col);
-        ring.position.set(stalk.position.x, (h / (nodes + 1)) * n, stalk.position.z);
+        var ny = (h / (nodes + 1)) * n;
+        var ring = mesh(
+          new THREE.CylinderGeometry(r * 1.16, r * 1.16, 0.09, 6),
+          '#C8DCA8', { steps: 2, darkness: 0.92 }
+        );
+        ring.position.set(px, ny, pz);
         g.add(ring);
       }
+
+      // 竹叶：成簇挂在竹梢，V 形两片一组，贴着竿向外伸
+      var leafClusters = 2 + Math.floor(rnd() * 2);
+      for (var c = 0; c < leafClusters; c++) {
+        var ca = rnd() * Math.PI * 2;
+        var cy = h * (0.72 + rnd() * 0.26);
+        var lc = leafColors[Math.floor(rnd() * leafColors.length)];
+
+        for (var k = 0; k < 3; k++) {
+          var leaf = mesh(
+            new THREE.PlaneGeometry(0.85, 0.22),
+            lc, { side: THREE.DoubleSide, steps: 2, darkness: 0.88 }
+          );
+          // 从竿上向外斜伸
+          var ang = ca + (k - 1) * 0.45;
+          leaf.position.set(
+            px + Math.cos(ang) * 0.44,
+            cy + (k - 1) * 0.12,
+            pz + Math.sin(ang) * 0.44
+          );
+          // 让叶片大致水平、朝外
+          leaf.rotation.y = -ang;
+          leaf.rotation.z = 0.45 + (rnd() - 0.5) * 0.3;
+          leaf.rotation.x = -0.35;
+          g.add(leaf);
+        }
+      }
+
+      // 竹冠：一个扁球给出绿色体量（不然顶上全是空线）
+      var crown = mesh(
+        new THREE.IcosahedronGeometry(0.62 + rnd() * 0.26, 0),
+        '#93B472', { steps: 2, darkness: 0.84 }
+      );
+      crown.position.set(px, h + 0.1, pz);
+      crown.scale.set(1, 0.62, 1);
+      g.add(crown);
     }
-    // 竹叶（顶部几片）
-    for (var l = 0; l < 10; l++) {
-      var leaf = mesh(new THREE.PlaneGeometry(0.5, 0.14), G.PALETTE.mossDark,
-        { side: THREE.DoubleSide });
-      var la = rnd() * Math.PI * 2;
-      leaf.position.set(Math.cos(la) * (0.8 + rnd()), 3.5 + rnd() * 2.5, Math.sin(la) * (0.8 + rnd()));
-      leaf.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
-      g.add(leaf);
-    }
+
     g.userData.stalks = stalks;
     return g;
   };

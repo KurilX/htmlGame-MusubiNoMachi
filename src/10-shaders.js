@@ -165,7 +165,7 @@
         uTexel: { value: new THREE.Vector2(1 / G.INTERNAL_W, 1 / G.INTERNAL_H) },
         uOutlineOn: { value: 1.0 },
         uOutlineColor: { value: new THREE.Color(G.PALETTE.inkBrown) },
-        uDepthThreshold: { value: 0.016 },
+        uDepthThreshold: { value: 0.045 },
         uLumThreshold: { value: 0.14 },
         uNear: { value: 0.1 },
         uFar: { value: 200.0 }
@@ -178,9 +178,15 @@
   };
 
   // 描边参数（外部可调）
+  //
+  // depthThreshold 的调参史（很重要，别随手改小）：
+  //   0.010 ~ 0.016  细长物体（竹竿、灯柱）整根被判定成边缘 -> 渲染成黑线。
+  //                  原因是 640x360 下竹竿只有 3~4 像素宽，深度梯度天然很大。
+  //   0.045          实测最优：轮廓清晰、细物体保色。
+  //   0.070+         边缘开始漏判，物体轮廓变淡。
   G.outlineParams = {
     on: true,
-    depthThreshold: 0.016,
+    depthThreshold: 0.045,
     lumThreshold: 0.14
   };
 

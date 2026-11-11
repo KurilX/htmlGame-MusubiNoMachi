@@ -282,10 +282,21 @@
   // =====================================================================
   // 提示
   // =====================================================================
+  // 踩过的坑：连按 E 读碑文会连续弹 4 条完全相同的 toast，糊满右侧。
+  // 这里做去重 + 同一内容 1.2 秒内只允许一条。
+  U._lastToast = { msg: '', at: 0 };
+
   U.toast = function (msg, ms) {
     if (!U.toastLayer) {
       U.toastLayer = G.dom.el('div', 'toasts', U.root);
     }
+    var now = performance.now();
+    if (msg === U._lastToast.msg && now - U._lastToast.at < 1200) {
+      return null;   // 重复内容，丢弃
+    }
+    U._lastToast.msg = msg;
+    U._lastToast.at = now;
+
     var t = G.dom.el('div', 'toast', U.toastLayer, msg);
     setTimeout(function () {
       t.classList.add('out');
@@ -293,6 +304,7 @@
         if (t.parentNode) t.parentNode.removeChild(t);
       }, 400);
     }, ms || 1500);
+    return t;
   };
 
   U.flashHurt = function () {

@@ -228,8 +228,15 @@
   // 交互（宝箱/碑文/结/采集/商店/NPC）
   // =====================================================================
   var IT = G.interact = {};
+  // 交互冷却：防止连按 E 对同一个目标重复触发（读碑文/采集合成一条路径）
+  IT._cooldown = 0;
+  IT._lastUid = null;
 
   IT.tryInteract = function () {
+    var now = G.main ? G.main.elapsed : performance.now() / 1000;
+    if (IT._cooldown > now) return;
+    IT._cooldown = now + 0.35;
+
     var st = G.player.state;
     // 先看 NPC（距离更近的优先）
     var npc = null, npcD = 2.6;
@@ -242,6 +249,7 @@
 
     var it = G.world.nearestInteractable(st.x, st.z, 2.4);
     if (!it) return;
+    IT._lastUid = it.uid;
 
     switch (it.kind) {
       case 'stele':
