@@ -1,0 +1,25 @@
+# 依赖
+node_modules/
+
+# 构建/验收临时产物
+# （game.html 是交付物，要提交；下面这些是每次跑测试都会变的截图）
+tools/*.png
+tools/_*.js
+tools/_*.html
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 临时文件
+COMMIT_MSG.txt
+*.tmp
+*.log
+
+# 本地 Chrome profile（验收脚本会生成在 %TEMP%，但防止误提交）
+.dsh-chrome-*/
