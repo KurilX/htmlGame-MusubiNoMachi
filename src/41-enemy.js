@@ -26,11 +26,11 @@
     var look = G.makeLook(def.look);
     var atlas = G.getChibiAtlas(look, defId);
     var mesh = G.makeChibiMesh(atlas, { worldH: (def.height || 1.7) * 1.05 });
-    mesh.position.set(x, (def.height || 1.7) * 0.5 + (def.floatOffset || 0), z);
+    mesh.position.set(x, G.world.groundY(x, z) + (def.height || 1.7) * 0.5 + (def.floatOffset || 0), z);
     G.world.scene.add(mesh);
 
     var shadow = G.sprite.makeShadow(def.radius * 2.2);
-    shadow.position.set(x, 0.02, z);
+    shadow.position.set(x, G.world.groundY(x, z) + 0.02, z);
     G.world.scene.add(shadow);
 
     var anim = G.sprite.createAnimator();
@@ -342,7 +342,8 @@
     var mesh = e.mesh;
     mesh.position.x = e.x;
     mesh.position.z = e.z;
-    var baseY = (def.height || 1.7) * 0.5;
+    var gy = G.world.groundY(e.x, e.z);
+    var baseY = gy + (def.height || 1.7) * 0.5;
     if (def.floatOffset) {
       baseY += def.floatOffset + Math.sin(performance.now() * 0.002 + e.id) * 0.12;
     }
@@ -365,6 +366,7 @@
     // 阴影
     e.shadow.position.x = e.x;
     e.shadow.position.z = e.z;
+    e.shadow.position.y = G.world.groundY(e.x, e.z) + 0.02;
     e.shadow.visible = !e.dead;
 
     // 受击闪红
@@ -382,7 +384,7 @@
       var showBar = e.hp < e.maxHp && !e.dead;
       e.hpBar.mesh.visible = showBar;
       if (showBar) {
-        var barY = (def.height || 1.7) + 0.35;
+        var barY = G.world.groundY(e.x, e.z) + (def.height || 1.7) + 0.35;
         e.hpBar.mesh.position.set(e.x, barY, e.z);
         if (G.camera.cam) {
           e.hpBar.mesh.lookAt(G.camera.cam.position.x, barY, G.camera.cam.position.z);

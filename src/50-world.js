@@ -80,9 +80,18 @@
     scene.fog = new THREE.Fog(new THREE.Color('#D9E4EA'), 62, 105);
 
     // ---- 光照 ----
-    var ambient = new THREE.AmbientLight(0xffffff, 0.92);
+    // 结构说明（调色时最容易被误判的一段）：
+    //   AmbientLight  只给整体一个常数亮度，对 Toon 的"暗部"几乎无帮助
+    //   HemisphereLight 天空色打顶、地面色打底，才能真正把背光面提亮
+    // 踩过的坑：只靠 Ambient + Directional 时，五重塔背光面被 Toon 暗部
+    // 压成深红，看上去像"颜色调错了"，实际是补光不足。
+    var ambient = new THREE.AmbientLight(0xffffff, 0.55);
     scene.add(ambient);
     W.ambient = ambient;
+
+    var hemi = new THREE.HemisphereLight(0xDCEAF2, 0xB8C89A, 0.62);
+    scene.add(hemi);
+    W.hemi = hemi;
 
     var sun = new THREE.DirectionalLight(0xfff6e8, 1.62);
     sun.position.set(16, 26, 14);
@@ -105,19 +114,87 @@
     W.fill = fill;
 
     // ---- 地面 ----
-    // 城镇地面：土黄
-    var townGeo = new THREE.BoxGeometry(38, 0.6, 28);
-    var townMesh = new THREE.Mesh(townGeo, G.art.groundMaterial('#C9A87C', { repeat: 7, seed: 3 }));
-    townMesh.position.set(0, -0.3, 0);
-    townMesh.receiveShadow = true;
-    scene.add(townMesh);
+    // 2026-11 改造：原来是两块纯平 BoxGeometry，野外看起来空旷。
+    // 现在按 G.terrain.height(x,z) 生成分段网格，支持坡坎/溪谷/盆地。
+    // 城镇区域高度恒为 0（terrain 内部用 townWeight 强制），所以城镇仍是平的。
+    W.ground = [];
 
-    // 野外地面：草地（大）
-    var fieldGeo = new THREE.BoxGeometry(72, 0.6, 56);
-    var fieldMesh = new THREE.Mesh(fieldGeo, G.art.groundMaterial(G.PALETTE.grass, { repeat: 16, seed: 9 }));
-    fieldMesh.position.set(0, -0.36, 39);
-    fieldMesh.receiveShadow = true;
+    function buildGroundMesh(opts) {
+      // opts: {minX,maxX,minZ,maxZ,segX,segZ,color,repeat,seed}
+      var geo = new THREE.PlaneGeometry(
+        opts.maxX - opts.minX,
+        opts.maxZ - opts.minZ,
+        opts.segX, opts.segZ
+      );
+      geo.rotateX(-Math.PI / 2);
+
+      // 把顶点按高度场抬高，并给顶点色做明暗层次
+      var pos = geo.attributes.position;
+      var colors = new Float32Array(pos.count * 3);
+      var cx = (opts.minX + opts.maxX) / 2;
+      var cz = (opts.minZ + opts.maxZ) / 2;
+      // 注意：贴图本身已经是 opts.color 了，材质 color 是白色。
+      // 所以顶点色必须是**围绕白色**的乘数（0.86~1.10），
+      // 不能再用 baseCol 去乘，否则 map x color x vertexColor 三重相乘，
+      // 草地会变成暗黄橄榄色（踩过一次完全一样的坑）。
+      var darkMul = 0.86;
+      var lightMul = 1.10;
+
+      for (var i = 0; i < pos.count; i++) {
+        var wx = pos.getX(i) + cx;
+        var wz = pos.getZ(i) + cz;
+        var h = G.terrain.height(wx, wz);
+        pos.setY(i, h);
+
+        // 顶点色：高处偏亮、低处偏暗，加一点确定性抖动避免死板
+        var t = G.M.clamp01((h + 2) / 9);
+        var jitter = (Math.sin(wx * 1.7) * Math.cos(wz * 1.3)) * 0.03;
+        var v = darkMul + (lightMul - darkMul) * G.M.clamp01(t + jitter);
+        colors[i * 3] = v;
+        colors[i * 3 + 1] = v;
+        colors[i * 3 + 2] = v;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geo.computeVertexNormals();
+
+      var mat = G.celMaterial('#FFFFFF', {
+        steps: 2,
+        darkness: 0.86,
+        map: G.art.grassTexture({
+          base: opts.color,
+          repeat: opts.repeat || 8,
+          seed: opts.seed || 5
+        }),
+        vertexColors: true
+      });
+
+      var m = new THREE.Mesh(geo, mat);
+      m.position.set(cx, 0, cz);
+      m.receiveShadow = true;
+      return m;
+    }
+
+    // 城镇地面（土黄，平坦）
+    var townMesh = buildGroundMesh({
+      minX: -20, maxX: 20, minZ: -14, maxZ: 14,
+      segX: 20, segZ: 14,
+      color: '#C9A87C', repeat: 8, seed: 3
+    });
+    scene.add(townMesh);
+    W.ground.push(townMesh);
+
+    // 野外地面（草地，有起伏）
+    // 范围必须比 WORLD 边界大很多：等距正交相机在 45° 下看到的范围
+    // 远超逻辑边界（视口高 24、宽约 43，加上俯角投影拉长），
+    // 网格小了就会在画面边缘露出天空（踩过）。
+    // 这里给到 ±90 / z∈[-50,130]，远超玩家可达范围。
+    var fieldMesh = buildGroundMesh({
+      minX: -90, maxX: 90, minZ: -12, maxZ: 130,
+      segX: 120, segZ: 96,
+      color: G.PALETTE.grass, repeat: 26, seed: 9
+    });
     scene.add(fieldMesh);
+    W.ground.push(fieldMesh);
 
     // 世界边界（不可见的围栏）——用碰撞体实现，不画几何
 
@@ -137,6 +214,11 @@
 
     // ---- NPC ----
     W.buildNPCs();
+
+    // ---- 批量植被（草丛 + 野花）----
+    // 性能要点：绝不能每丛草一个 Mesh（会产生上千 draw call）。
+    // 这里用 InstancedMesh：一次 draw call 画几百丛。
+    W.buildVegetation();
 
     // ---- 刷怪区 ----
     W.spawnZones = [];
@@ -191,6 +273,23 @@
 
       case 'stairs':
         obj = art.stoneStairs({ steps: spec.steps, w: spec.w, rise: spec.rise, run: spec.run });
+        break;
+
+      case 'path':
+        obj = art.path({ w: spec.w, d: spec.d, y: spec.y, x: spec.x, z: spec.z, seed: spec.seed });
+        break;
+
+      case 'pagoda':
+        obj = art.pagoda({
+          tiers: spec.tiers, baseW: spec.baseW,
+          color: spec.color, roof: spec.roof
+        });
+        W.addCircleCollider(spec.x, spec.z, (spec.baseW || 5) * 0.72);
+        break;
+
+      case 'stoneLantern':
+        obj = art.stoneLantern({ scale: spec.scale });
+        W.addCircleCollider(spec.x, spec.z, 0.4 * (spec.scale || 1));
         break;
 
       case 'rock': {
@@ -312,6 +411,12 @@
     if (obj) {
       obj.position.x = spec.x;
       obj.position.z = spec.z;
+      // 贴地：所有道具都放在地面上。
+      // 例外：water / gate 自己管理高度；path 内部已按世界坐标逐顶点算过高度，
+      // 再抬一次会 double-offset（悬空）。
+      if (spec.type !== 'water' && spec.type !== 'gate' && spec.type !== 'path') {
+        obj.position.y = W.groundY(spec.x, spec.z);
+      }
       if (spec.rotY) obj.rotation.y = spec.rotY;
       obj.userData.spec = spec;
       obj.userData.baseY = obj.position.y;
@@ -320,12 +425,119 @@
     return obj;
   };
 
+  // =====================================================================
+  // 批量植被（InstancedMesh，单 draw call）
+  // =====================================================================
+  W.buildVegetation = function () {
+    var rnd = G.mulberry32(90210);
+    var W_D = G.DATA.WORLD;
+
+    // 采样区域：只铺野外（城镇保持干净）
+    var TOWN = G.DATA.TOWN;
+    function inField(x, z) {
+      if (x >= TOWN.minX && x <= TOWN.maxX && z >= TOWN.minZ && z <= TOWN.maxZ) return false;
+      if (z < 14) return false;
+      return true;
+    }
+
+    // ---- 草丛 ----
+    var tuftCount = 420;
+    var tuftGeo = new THREE.PlaneGeometry(0.5, 0.34);
+    var tuftMat = G.celMaterial('#9CB87A', {
+      steps: 2, darkness: 0.9, side: THREE.DoubleSide,
+      transparent: true, alphaTest: 0.4
+    });
+    var tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, tuftCount * 2);
+    tufts.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    tufts.receiveShadow = false;
+    tufts.castShadow = false;
+
+    var m4 = new THREE.Matrix4();
+    var q = new THREE.Quaternion();
+    var pos = new THREE.Vector3();
+    var scale = new THREE.Vector3();
+    var idx = 0;
+
+    for (var i = 0; i < tuftCount; i++) {
+      var x = W_D.minX + rnd() * (W_D.maxX - W_D.minX);
+      var z = 14 + rnd() * 52;
+      if (!inField(x, z)) continue;
+      // 不在水里
+      if (G.terrain.isUnderwater(x, z)) continue;
+
+      var gy = G.terrain.height(x, z);
+      var s = 0.7 + rnd() * 0.7;
+
+      // 每丛两片交叉
+      for (var k = 0; k < 2; k++) {
+        var ang = rnd() * Math.PI + k * Math.PI / 2;
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ang);
+        pos.set(x, gy + 0.16 * s, z);
+        scale.set(s, s, s);
+        m4.compose(pos, q, scale);
+        tufts.setMatrixAt(idx++, m4);
+      }
+    }
+    tufts.count = idx;
+    tufts.instanceMatrix.needsUpdate = true;
+    W.scene.add(tufts);
+    W.vegetation = W.vegetation || {};
+    W.vegetation.tufts = tufts;
+
+    // ---- 野花 ----
+    var flowerCount = 150;
+    var flowerGeo = new THREE.IcosahedronGeometry(0.09, 0);
+    var flowerColors = ['#F7C8D8', '#FBF3E4', '#E8C25A', '#D9A0E8'];
+    var flowerMat = G.celMaterial('#FFFFFF', { steps: 2, darkness: 0.9, vertexColors: false });
+    // 用 InstancedMesh + instanceColor 上色
+    var flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, flowerCount);
+    flowers.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(flowerCount * 3), 3);
+
+    var fIdx = 0;
+    for (var f = 0; f < flowerCount; f++) {
+      var fx = W_D.minX + rnd() * (W_D.maxX - W_D.minX);
+      var fz = 15 + rnd() * 50;
+      if (!inField(fx, fz)) continue;
+      if (G.terrain.isUnderwater(fx, fz)) continue;
+
+      var fgy = G.terrain.height(fx, fz);
+      var fs = 0.8 + rnd() * 0.6;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28);
+      pos.set(fx, fgy + 0.3 * fs, fz);
+      scale.set(fs, fs, fs);
+      m4.compose(pos, q, scale);
+      flowers.setMatrixAt(fIdx, m4);
+
+      var c = new THREE.Color(flowerColors[Math.floor(rnd() * flowerColors.length)]);
+      flowers.instanceColor.setXYZ(fIdx, c.r, c.g, c.b);
+      fIdx++;
+    }
+    flowers.count = fIdx;
+    flowers.instanceMatrix.needsUpdate = true;
+    flowers.instanceColor.needsUpdate = true;
+    W.scene.add(flowers);
+    W.vegetation.flowers = flowers;
+  };
+
   // ---------- 碰撞体（手工简单形状，够用且快） ----------
   W.addCircleCollider = function (x, z, r) {
     W.colliders.push({ kind: 'circle', x: x, z: z, r: r });
   };
   W.addBoxCollider = function (x, z, w, d, rotY) {
     W.colliders.push({ kind: 'box', x: x, z: z, w: w, d: d, rotY: rotY || 0 });
+  };
+
+  /**
+   * 取某点的地面高度。所有实体的 y 都应该经过这里，
+   * 不要直接写字面量（踩过：地形改造后实体半埋进土里）。
+   */
+  W.groundY = function (x, z) {
+    return G.terrain ? G.terrain.height(x, z) : 0;
+  };
+
+  /** 水面高度（河） */
+  W.waterY = function () {
+    return G.terrain ? G.terrain.waterLevel() : -1.15;
   };
 
   /** 把点推出所有碰撞体；返回修正后的位置 */
@@ -381,19 +593,17 @@
     return x >= T.minX && x <= T.maxX && z >= T.minZ && z <= T.maxZ;
   };
 
-  /** 地形速度系数（水里慢） */
+  /** 地形速度系数（水里慢、陡坡也慢） */
   W.terrainSpeed = function (x, z) {
-    var props = W.props;
-    for (var i = 0; i < props.length; i++) {
-      var s = props[i].spec;
-      if (s.type === 'water') {
-        if (x > s.x - s.w / 2 && x < s.x + s.w / 2 &&
-            z > s.z - s.d / 2 && z < s.z + s.d / 2) {
-          return 0.62;
-        }
-      }
+    var mul = 1;
+    // 水中
+    if (G.terrain && G.terrain.isUnderwater(x, z)) mul *= 0.62;
+    // 陡坡（超过 0.35 的坡度开始减速）
+    if (G.terrain) {
+      var st = G.terrain.steepness(x, z);
+      if (st > 0.35) mul *= Math.max(0.55, 1 - (st - 0.35) * 0.9);
     }
-    return 1;
+    return mul;
   };
 
   // =====================================================================
@@ -407,7 +617,7 @@
       var atlas = G.getChibiAtlas(look, def.id);
       var m = G.makeChibiMesh(atlas, { worldH: 2.1 });
       var sp = W.isNight() ? def.night : def.day;
-      m.position.set(sp.x, 1.05, sp.z);
+      m.position.set(sp.x, W.groundY(sp.x, sp.z) + 1.05, sp.z);
       W.scene.add(m);
       var npc = {
         def: def, look: look, atlas: atlas, mesh: m,
@@ -430,6 +640,7 @@
       npc.x = target.x; npc.z = target.z;
       npc.mesh.position.x = target.x;
       npc.mesh.position.z = target.z;
+      npc.mesh.position.y = W.groundY(target.x, target.z) + 1.05;
     }
   };
 
@@ -463,12 +674,14 @@
       sunColor.lerp(new THREE.Color('#FFB070'), dusk * 0.85 * (1 - t * 0.4));
     }
     var sunIntensity = G.M.lerp(1.62, 0.42, t);
-    var ambIntensity = G.M.lerp(0.92, 0.52, t);
+    var ambIntensity = G.M.lerp(0.55, 0.3, t);
+    var hemiIntensity = G.M.lerp(0.62, 0.26, t);
     var fillIntensity = G.M.lerp(0.42, 0.25, t);
 
     W.sun.color.copy(sunColor);
     W.sun.intensity = sunIntensity;
     W.ambient.intensity = ambIntensity;
+    if (W.hemi) W.hemi.intensity = hemiIntensity;
     if (W.fill) W.fill.intensity = fillIntensity;
 
     // 天空

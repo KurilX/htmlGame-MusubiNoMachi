@@ -179,7 +179,9 @@
     // UI 与特效保持更新（不受 hitstop 影响）
     G.fx.update(dt);
     G.ui.update(dt);
-    G.camera.update(dt, { x: st.x, z: st.z, y: 0.6 });
+    // 相机跟随：y 也要跟地形走，否则上坡时角色会跑出画面
+    var groundY = G.world.groundY(st.x, st.z);
+    G.camera.update(dt, { x: st.x, z: st.z, y: groundY + 0.6 });
 
     // 交互
     if (G.input.pressed.interact) {

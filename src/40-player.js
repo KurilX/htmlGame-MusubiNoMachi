@@ -229,12 +229,14 @@
 
     mesh.position.x = st.x;
     mesh.position.z = st.z;
+    // 贴地：脚下高度 + 半身高
+    var gy = G.world.groundY(st.x, st.z);
     // 死亡时下沉
-    mesh.position.y = st.dead ? 0.55 : 1.02;
+    mesh.position.y = st.dead ? gy + 0.55 : gy + 1.02;
 
     // 翻滚时压扁提示
     if (st.dodge.timer > 0) {
-      mesh.position.y = 0.78;
+      mesh.position.y = gy + 0.78;
     }
 
     var dir8 = G.sprite.dir8FromAngle(st.facing, G.camera.yaw);
@@ -254,6 +256,7 @@
     // 阴影
     P.shadow.position.x = st.x;
     P.shadow.position.z = st.z;
+    P.shadow.position.y = G.world.groundY(st.x, st.z) + 0.02;
     P.shadow.visible = !st.dead;
     var sc = st.dodge.timer > 0 ? 1.2 : 1;
     P.shadow.scale.setScalar(sc);

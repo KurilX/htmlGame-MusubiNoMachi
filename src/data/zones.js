@@ -67,8 +67,37 @@
     // ===== 城镇：碑文 =====
     { type: 'stele', x: -4.5, z: 10.5, uid: 'stele_town_1' },
 
+    // ===== 野外：主路径（土路，从城镇鸟居一路通到副本入口） =====
+    // 作用：给玩家一条"视觉上的引导线"，也让大片草绿有呼吸空间。
+    // y 略微抬高避免与草地 z-fighting。
+    { type: 'path', x: 0, z: 18, w: 4.2, d: 10, y: 0.012 },
+    { type: 'path', x: 0, z: 28, w: 4.0, d: 10, y: 0.012 },
+    { type: 'path', x: 0, z: 38, w: 4.4, d: 10, y: 0.012 },
+    { type: 'path', x: 0, z: 48, w: 4.0, d: 10, y: 0.012 },
+    { type: 'path', x: 0, z: 58, w: 4.6, d: 10, y: 0.012 },
+
+    // ===== 野外：远景地标（五重塔） =====
+    // 配色调过两轮：
+    //  v1 #C08A62 + #B85A4A -> 暗部与阴影下整体读作暗红
+    //  v2 #D9A87C + #C9705E -> 檐面积太大仍偏砖红
+    //  v3 现在：塔身取奶油木色、檐取淡朱、并用高明度保证 Toon 暗部不掉黑
+    { type: 'pagoda', x: 25, z: 60, tiers: 5, baseW: 5.2,
+      color: '#E8C9A0', roof: '#E09078' },
+    { type: 'pagoda', x: -27, z: 22, tiers: 3, baseW: 3.2,
+      color: '#DDBE96', roof: '#D49280' },
+
+    // ===== 野外：石灯笼群（沿主路径） =====
+    { type: 'stoneLantern', x: -4, z: 20, scale: 1.35 },
+    { type: 'stoneLantern', x: 4, z: 20, scale: 1.35 },
+    { type: 'stoneLantern', x: -5, z: 34, scale: 1.4 },
+    { type: 'stoneLantern', x: 5, z: 34, scale: 1.4 },
+    { type: 'stoneLantern', x: -4, z: 48, scale: 1.45 },
+    { type: 'stoneLantern', x: 4, z: 48, scale: 1.45 },
+    { type: 'stoneLantern', x: -6, z: 60, scale: 1.5 },
+    { type: 'stoneLantern', x: 6, z: 60, scale: 1.5 },
+
     // ===== 野外：溪谷 =====
-    { type: 'water', x: -22, z: 34, w: 7, d: 34, y: -0.14 },
+    { type: 'water', x: -22, z: 35, w: 7.5, d: 42, y: -1.15 },
 
     // ===== 野外：竹林 =====
     { type: 'bamboo', x: 16, z: 26, count: 9, spread: 3.2, seed: 101 },

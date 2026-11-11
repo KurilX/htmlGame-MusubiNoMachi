@@ -16,6 +16,12 @@ const viewH = parseFloat(args[3] || '24');
   const cdp = b.cdp;
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
+  // file:// 下浏览器会缓存同目录的 JS，改完代码看不到效果（踩过）。
+  // 彻底禁用缓存 + cacheBust 双保险。
+  try {
+    await cdp.send('Network.enable');
+    await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+  } catch (e) {}
   await cdp.send('Page.navigate', {
     url: 'file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now()
   });

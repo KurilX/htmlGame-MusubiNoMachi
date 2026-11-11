@@ -568,6 +568,203 @@
     return g;
   };
 
+  // ---------- 土路 ----------
+  // 必须逐顶点贴合地形，否则在坡坎上会悬空或插进土里。
+  // 用细分平面（默认 8x8 段足够）并按 height(x,z) 抬顶点。
+  W.path = function (opt) {
+    opt = opt || {};
+    var w = opt.w || 4;
+    var d = opt.d || 10;
+    var segX = Math.max(2, Math.round(w / 0.6));
+    var segZ = Math.max(2, Math.round(d / 0.6));
+
+    var geo = new THREE.PlaneGeometry(w, d, segX, segZ);
+    geo.rotateX(-Math.PI / 2);
+
+    var pos = geo.attributes.position;
+    for (var i = 0; i < pos.count; i++) {
+      // 局部坐标 -> 世界坐标（group 会被放到 opt.x/opt.z）
+      var lx = pos.getX(i);
+      var lz = pos.getZ(i);
+      var wx = lx + (opt.x || 0);
+      var wz = lz + (opt.z || 0);
+      pos.setY(i, G.terrain.height(wx, wz) + (opt.y || 0));
+    }
+    geo.computeVertexNormals();
+
+    var tex = G.art.grassTexture({
+      base: '#C9A87C',
+      repeat: Math.max(2, Math.round(d / 4)),
+      seed: (opt.seed || 3) + Math.round(opt.z || 0)
+    });
+
+    var mat = G.celMaterial('#FFFFFF', {
+      steps: 2,
+      darkness: 0.82,
+      map: tex
+    });
+    // 修正 UV：默认 UV 是 0..1，贴图靠 texture.repeat 铺
+    tex.repeat.set(1, 1);
+
+    var m = new THREE.Mesh(geo, mat);
+    m.receiveShadow = true;
+    m.position.y = opt.y || 0;
+    return m;
+  };
+
+  // ---------- 远景地标：五重塔 ----------
+  // 目的：给野外一个"远看就知道往哪走"的视觉锚点。
+  // 等距俯视下高塔的剪影最能打破地平线的单调。
+  W.pagoda = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var tiers = opt.tiers || 5;
+    var baseW = opt.baseW || 5.0;
+    var bodyColor = opt.color || G.PALETTE.vermilionD;
+    var roofColor = opt.roof || '#8A3A32';
+
+    // 石基座
+    var plinth = mesh(new THREE.BoxGeometry(baseW + 2.2, 0.7, baseW + 2.2), G.PALETTE.stone);
+    plinth.position.y = 0.35;
+    g.add(plinth);
+    var plinth2 = mesh(new THREE.BoxGeometry(baseW + 1.2, 0.5, baseW + 1.2), G.PALETTE.stoneDark);
+    plinth2.position.y = 0.95;
+    g.add(plinth2);
+
+    var y = 1.2;
+    for (var i = 0; i < tiers; i++) {
+      var t = i / Math.max(1, tiers - 1);
+      var w = baseW * (1 - t * 0.52);
+      var h = 1.5 * (1 - t * 0.22);
+
+      var body = mesh(new THREE.BoxGeometry(w, h, w), bodyColor,
+        { steps: 2, darkness: 0.88 });
+      body.position.y = y + h / 2;
+      g.add(body);
+
+      // 屋檐（两块交叉薄板伪造四坡）
+      // 檐宽不能太夸张：初版 eaveW = w + 1.5，导致视觉上几乎只看见檐、
+      // 看不见塔身，整座塔读起来是一片暗红。收到 w + 0.9。
+      var eaveW = w + 0.9;
+      for (var k = 0; k < 2; k++) {
+        var eave = mesh(new THREE.BoxGeometry(eaveW, 0.2, eaveW * 0.58),
+          roofColor, { steps: 2, darkness: 0.9 });
+        eave.position.y = y + h + 0.1;
+        eave.rotation.y = k * Math.PI / 2;
+        g.add(eave);
+      }
+      // 檐角翘起（小块，别喧宾夺主）
+      for (var s = 0; s < 4; s++) {
+        var a = s * Math.PI / 2 + Math.PI / 4;
+        var tip = mesh(new THREE.BoxGeometry(0.6, 0.16, 0.6), roofColor,
+          { steps: 2, darkness: 0.9 });
+        tip.position.set(
+          Math.cos(a) * eaveW * 0.4,
+          y + h + 0.22,
+          Math.sin(a) * eaveW * 0.4
+        );
+        tip.rotation.y = a;
+        g.add(tip);
+      }
+
+      // 窗（发光）
+      if (i < tiers - 1) {
+        var winMat = G.celMaterial(G.PALETTE.lampGlow, {
+          steps: 2, darkness: 0.92,
+          emissive: G.PALETTE.lampGlow, emissiveIntensity: 0.4
+        });
+        var win = new THREE.Mesh(new THREE.BoxGeometry(w * 0.34, h * 0.42, 0.1), winMat);
+        win.position.set(0, y + h * 0.5, w / 2 + 0.04);
+        g.add(win);
+      }
+
+      y += h + 1.0;
+    }
+
+    // 相轮（顶端尖塔）
+    var spire = mesh(new THREE.CylinderGeometry(0.14, 0.2, 3.2, 6), '#6B8A5A');
+    spire.position.y = y + 1.4;
+    g.add(spire);
+    for (var r = 0; r < 4; r++) {
+      var ring = mesh(new THREE.TorusGeometry(0.42 - r * 0.06, 0.07, 4, 10),
+        G.PALETTE.gold, { steps: 2, darkness: 0.85 });
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = y + 0.5 + r * 0.55;
+      g.add(ring);
+    }
+
+    g.userData.height = y;
+    return g;
+  };
+
+  // ---------- 石灯笼（地标点缀） ----------
+  W.stoneLantern = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var s = opt.scale || 1;
+    var base = mesh(new THREE.CylinderGeometry(0.42 * s, 0.5 * s, 0.3 * s, 6), G.PALETTE.stone);
+    base.position.y = 0.15 * s;
+    g.add(base);
+    var post = mesh(new THREE.CylinderGeometry(0.16 * s, 0.2 * s, 1.1 * s, 6), G.PALETTE.stone);
+    post.position.y = 0.85 * s;
+    g.add(post);
+    var box = new THREE.Mesh(
+      new THREE.BoxGeometry(0.55 * s, 0.45 * s, 0.55 * s),
+      G.celMaterial(G.PALETTE.lampGlow, {
+        steps: 2, darkness: 0.94,
+        emissive: G.PALETTE.lampGlow, emissiveIntensity: 0.75
+      })
+    );
+    box.position.y = 1.62 * s;
+    g.add(box);
+    var roof = mesh(new THREE.ConeGeometry(0.55 * s, 0.38 * s, 4), G.PALETTE.stoneDark);
+    roof.position.y = 2.02 * s;
+    roof.rotation.y = Math.PI / 4;
+    g.add(roof);
+    var pl = new THREE.PointLight(0xFFE0A0, 0.8, 5, 2);
+    pl.position.y = 1.62 * s;
+    g.add(pl);
+    g.userData.light = pl;
+    return g;
+  };
+
+  // ---------- 草丛（贴地小物件，增加密度感） ----------
+  W.grassTuft = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var col = opt.color || '#8AA96A';
+    var h = 0.3 + ((opt.seed || 0) % 7) / 22;
+    for (var i = 0; i < 3; i++) {
+      var blade = mesh(
+        new THREE.PlaneGeometry(0.11, h),
+        col,
+        { side: THREE.DoubleSide, steps: 2, darkness: 0.9 }
+      );
+      var a = (i / 3) * Math.PI + (opt.seed || 0) * 0.3;
+      blade.position.set(Math.cos(a) * 0.07, h / 2, Math.sin(a) * 0.07);
+      blade.rotation.y = a;
+      blade.rotation.z = (i - 1) * 0.18;
+      g.add(blade);
+    }
+    return g;
+  };
+
+  // ---------- 野花 ----------
+  W.flower = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var col = opt.color || '#F7C8D8';
+    var stem = mesh(new THREE.PlaneGeometry(0.05, 0.3), '#7FA85E',
+      { side: THREE.DoubleSide });
+    stem.position.y = 0.15;
+    g.add(stem);
+    var head = mesh(new THREE.IcosahedronGeometry(0.11, 0), col,
+      { steps: 2, darkness: 0.88 });
+    head.position.y = 0.34;
+    g.add(head);
+    return g;
+  };
+
   // ---------- 传送点 / 神社 ----------
   W.shrine = function (opt) {
     opt = opt || {};
