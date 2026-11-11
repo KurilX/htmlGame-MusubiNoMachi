@@ -1,9 +1,0 @@
-chore: 准备开源 —— README、.gitignore、清理临时文件
-
-- 新增 README.md：项目定位、玩法、技术决策、目录结构、验收说明
-- 新增 .gitignore：验收截图/临时产物不入库（截图每次跑测试都会变）
-- 移除 COMMIT_MSG.txt（0 字节临时文件，上次提交后未清理）
-- 取消跟踪 4 个验收截图（磁盘保留）
-
-仓库本地身份固定为 Kurilsang <73654618+Kurilsang@users.noreply.github.com>，
-与已有 10 个提交一致，避免误用全局的公司邮箱配置。
