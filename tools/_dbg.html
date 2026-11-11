@@ -1,0 +1,18 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><pre id="log"></pre>
+<script>
+window.__errs = [];
+window.onerror = function(m,s,l,c,e){ window.__errs.push(m + ' @' + s + ':' + l + ':' + c + '\n' + (e&&e.stack||'')); };
+</script>
+<script src="../vendor/three.min.js"></script>
+<script src="../src/00-core.js"></script>
+<script src="../src/11-pixels.js"></script>
+<script src="../src/20-art-chibi.js"></script>
+<script>
+try {
+  var atlas = G.buildChibiAtlas(G.makeLook({}));
+  document.getElementById('log').textContent = 'OK canvas=' + atlas.canvas.width + 'x' + atlas.canvas.height + ' rows=' + atlas.rows;
+} catch(e) {
+  document.getElementById('log').textContent = 'THROWN: ' + e.message + '\n' + e.stack;
+}
+if (window.__errs.length) document.getElementById('log').textContent += '\nERR: ' + window.__errs.join('\n');
+</script></body></html>
