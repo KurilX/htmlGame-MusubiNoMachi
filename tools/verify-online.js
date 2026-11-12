@@ -31,15 +31,23 @@ async function main() {
 
   // ---- 0. 线上文件完整性（HTTP 层，先于浏览器） ----
   //
-  // 用 HEAD 拿 Content-Length 与本地 game.html 比对。
-  // 注意：必须用 Content-Length 响应头，不能用 Invoke-WebRequest 的
-  // .Content.Length（那是解码后的字符数，会差几万）。
+  // 用 HEAD 拿 Content-Length 与 **git 里存储的版本** 比对。
+  //
+  // 【两个已经踩过的坑，都别再犯】
+  //  坑1：不能用 Invoke-WebRequest 的 .Content.Length —— 那是解码后的
+  //       字符数，不是字节数（曾读 958959 实际 984554，误判文件被改）。
+  //       要用 Content-Length 响应头。
+  //  坑2：不能拿本地磁盘的 game.html 比 —— 本机 core.autocrlf=true，
+  //       磁盘是 CRLF 而 git 存的是 LF，字节数天然不同（差值=行数）。
+  //       必须用 `git cat-file -s HEAD:game.html` 拿 git 版本的字节数。
   try {
-    const localSize = fs.statSync(path.join(ROOT, 'game.html')).size;
+    const { execFileSync } = require('child_process');
+    const gitSize = parseInt(
+      execFileSync('git', ['cat-file', '-s', 'HEAD:game.html'], { cwd: ROOT }).toString().trim(), 10);
+
     const http = require('http');
     const https = require('https');
     // 注意：用 require('url').URL，不要直接用全局 URL
-    // （踩过：URL is not a constructor，因为全局 URL 在某些上下文被覆盖）
     const { URL: NodeURL } = require('url');
     const urlObj = new NodeURL(URL);
     const client = urlObj.protocol === 'https:' ? https : http;
@@ -54,10 +62,10 @@ async function main() {
       req.setTimeout(20000, () => req.destroy(new Error('timeout')));
       req.end();
     });
-    check('线上文件的字节数与本地一致', remoteSize === localSize,
-      'remote=' + remoteSize + ' local=' + localSize);
+    check('线上文件字节数 == git 版本（说明部署的是最新提交）',
+      remoteSize === gitSize, 'remote=' + remoteSize + ' git=' + gitSize);
   } catch (e) {
-    check('线上文件的字节数与本地一致', false, 'HEAD 失败: ' + e.message);
+    check('线上文件字节数 == git 版本（说明部署的是最新提交）', false, 'HEAD 失败: ' + e.message);
   }
 
   const b = await launchOwnChrome({ width: 1280, height: 720 });
