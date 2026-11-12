@@ -108,9 +108,12 @@ async function main() {
 
   // ---- 3. 延迟特效走帧循环，不用 setTimeout ----
   //
-  // moonSlash 的结构：立即创建 1 个 impactRing + 2 个延迟的月影层。
-  // 所以「未推帧时只有 1 个」才是正确行为（那 1 个是 impactRing），
-  // 推帧后应变成 3 个（1 + 2 层）。
+  // moonSlash 的结构：立即创建 1 个 impactRing + 2 个延迟的月影层（0ms / 45ms）。
+  // 断言：未推帧 -> 恰好 1 个；推 12 帧（200ms，远超 45ms）-> 3 个。
+  //
+  // 曾经用 6 帧（100ms）判断，刚好卡在 45ms 延迟的边缘，
+  // 加上 Node<->浏览器 往返抖动会偶发失败（一次 6/6、一次 5/6）。
+  // 给足 12 帧后稳定。
   const delay = await cdp.eval(`(function(){
     G.fx.clear();
     function countRings() {
@@ -122,17 +125,14 @@ async function main() {
     }
     var before = countRings();
     G.fx.moonSlash(0, 0, 0, 3.4);
-    // 立刻数：只应有 impactRing 那 1 个，两个延迟层尚未创建
     var beforeTick = countRings();
-    // 推 6 帧（100ms > 45ms 延迟），两层都出现
-    for (var i = 0; i < 6; i++) G.tickOnce(1/60);
+    for (var i = 0; i < 12; i++) G.tickOnce(1/60);
     var afterTick = countRings();
     return { base: before, beforeTick: beforeTick, afterTick: afterTick };
   })()`);
-  // 期望：未推帧刚好 1 个（impactRing），推帧后 3 个（1 + 2 层）
   check('延迟特效由帧循环驱动（推帧前只有立即创建的那个）',
     delay.beforeTick === 1 && delay.afterTick === 3,
-    `基线${delay.base} 未推帧=${delay.beforeTick} 推6帧=${delay.afterTick}`);
+    `基线${delay.base} 未推帧=${delay.beforeTick} 推12帧=${delay.afterTick}`);
 
   // ---- 4. 反复释放无残留 ----
   const leak = await cdp.eval(`(function(){
