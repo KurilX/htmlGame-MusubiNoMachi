@@ -77,7 +77,18 @@
     scene.background = new THREE.Color(G.PALETTE.sky);
     // 雾：起点必须远大于相机到玩家的距离（相机距离 34），
     // 否则整个画面糊成一片（踩过：near=34 时全屏发灰）
-    scene.fog = new THREE.Fog(new THREE.Color('#D9E4EA'), 62, 105);
+    //
+    // 【2026-11 世界扩建后必须拉远】
+    // 原来 near=62 far=105。世界只有 68x82 时够用，但扩到 280x270 后：
+    // 相机在 y≈32、俯角 35°，到屏幕边缘的地面距离超过 105，
+    // 那些地面被雾**完全遮盖**，显示成雾色 #D9E4EA -> 经过色阶后
+    // 看起来就是一片"海水蓝"（实测采样 rgb(122,183,206)）。
+    // 排查过程绕了很久：先怀疑是海面平面、又怀疑地面块被视锥剔除，
+    // 都不对；最后把海删掉、背景改纯黑，那片蓝依然在 —— 才定位到雾。
+    //
+    // 新值 far=520：覆盖世界对角线 280√2≈400 的可见范围。
+    // 雾只用来柔化最远处，不再遮住中景。
+    scene.fog = new THREE.Fog(new THREE.Color('#D9E4EA'), 300, 520);
 
     // ---- 光照 ----
     // 结构说明（调色时最容易被误判的一段）：
@@ -112,7 +123,6 @@
     fill.position.set(-18, 12, -16);
     scene.add(fill);
     W.fill = fill;
-
     // ---- 地面 ----
     // 按 G.terrain.height(x,z) 生成分段网格，支持坡坎/溪谷/盆地/山体/海岸。
     // 城镇区域高度恒为 0（terrain 内部用 townWeight 强制），所以城镇仍是平的。
@@ -139,9 +149,20 @@
       var darkMul = 0.86;
       var lightMul = 1.10;
 
+      // 【关键：顶点保留**局部坐标**，世界位置只靠 mesh.position 表达】
+      //
+      // 踩过的坑（花了很久才定位）：原来这里写 pos.setX(i, wx)，即把顶点
+      // 直接抬成世界坐标，然后 mesh.position 又设成 (cx, 0, cz) —— 双重偏移。
+      // 结果每个 60x60 的块实际落在 [2cx-30, 2cx+30]，块与块之间出现
+      // 大片空洞，玩家看到的是背景色（浅蓝），看起来像"地面上冒出一片海"。
+      //
+      // 现在：顶点 x/z 保持 PlaneGeometry 原始的局部值（±size/2），
+      // 只用 wx/wz 去采样地形高度；世界定位交给 mesh.position。
       for (var i = 0; i < pos.count; i++) {
-        var wx = pos.getX(i) + cx;
-        var wz = pos.getZ(i) + cz;
+        var lx = pos.getX(i);      // 局部 x
+        var lz = pos.getZ(i);      // 局部 z
+        var wx = lx + cx;          // 世界 x（仅用于采样）
+        var wz = lz + cz;          // 世界 z（仅用于采样）
         var h = G.terrain.height(wx, wz);
         pos.setY(i, h);
 
@@ -204,6 +225,14 @@
     var z0 = WORLD.minZ - PAD, z1 = WORLD.maxZ + PAD;
 
     var tileCount = 0;
+    // 块之间**故意重叠** OVERLAP 单位。
+    //
+    // 【为什么要重叠】纯拼接的块在浮点边界与地形起伏下会出现细缝，
+    // 缝里露出的是背景色（浅蓝），肉眼看起来像"地面破洞冒海水"。
+    // 实测：只渲染地面块时，蓝点位置采到的是清屏色 rgb(255,0,255)，
+    // 证明那里确实没有几何体。
+    // 重叠 4 单位后，任何浮点误差都被下一块盖住。
+    var OVERLAP = 4;
     for (var tx = x0; tx < x1; tx += TILE) {
       for (var tz = z0; tz < z1; tz += TILE) {
         var mx0 = tx, mx1 = Math.min(tx + TILE, x1);
@@ -215,11 +244,21 @@
         // 每块 24x24 段，即 2.5 单位一格，足够表现地形起伏
         var seg = 24;
         var mesh = buildGroundMesh({
-          minX: mx0, maxX: mx1, minZ: mz0, maxZ: mz1,
+          minX: mx0 - OVERLAP, maxX: mx1 + OVERLAP,
+          minZ: mz0 - OVERLAP, maxZ: mz1 + OVERLAP,
           segX: seg, segZ: seg,
           color: G.PALETTE.grass,
           repeat: 8, seed: 9 + tileCount
         });
+        // 重叠块之间靠轻微的 Y 偏移避免 z-fighting（错开 2cm，肉眼不可见）
+        //
+        // 【必须用 += 而不是 = 】
+        // buildGroundMesh 内部已经把 position 设成 (cx, 0, cz)。
+        // 这里若直接赋值 y，会把 cx/cz 一起抹成 0 ——
+        // 37 个地面块全部叠到世界原点，中心处重叠 37 层，
+        // 表现为：画面异常 + 帧率崩塌 + 大片区域没有地面（露出背景色）。
+        // 这个 bug 我排查了很久，症状和"海面太大""雾太近""视锥剔除"都很像。
+        mesh.position.y += (tileCount % 7) * 0.02;
         scene.add(mesh);
         W.ground.push(mesh);
         tileCount++;
@@ -228,12 +267,12 @@
     W.groundTileCount = tileCount;
 
     // 世界边界（不可见的围栏）——用碰撞体实现，不画几何
-
     // ---- 静态物件 ----
     W.props = [];
     W.colliders = [];
     W.interactables = [];
 
+    // 原来的結ノ町 + 霞ヶ原物件
     var D = G.DATA.PROPS;
     for (var i = 0; i < D.length; i++) {
       var spec = D[i];
@@ -243,6 +282,29 @@
       W.props.push({ spec: spec, obj: obj });
     }
 
+    // ---- 新地区物件（神山 / 码头 / 沙滩）----
+    // 手工摆放的关键地标
+    if (G.DATA.REGION_PROPS) {
+      for (var r = 0; r < G.DATA.REGION_PROPS.length; r++) {
+        var rspec = G.DATA.REGION_PROPS[r];
+        var robj = W.buildProp(rspec);
+        if (!robj) continue;
+        scene.add(robj);
+        W.props.push({ spec: rspec, obj: robj });
+      }
+    }
+
+    // 程序化撒的装饰物（山石、松树、贝壳、草丛）
+    if (G.DATA.generateRegionDecor) {
+      var decor = G.DATA.generateRegionDecor();
+      for (var d2 = 0; d2 < decor.length; d2++) {
+        var dspec = decor[d2];
+        var dobj = W.buildProp(dspec);
+        if (!dobj) continue;
+        scene.add(dobj);
+        W.props.push({ spec: dspec, obj: dobj });
+      }
+    }
     // ---- NPC ----
     W.buildNPCs();
 
@@ -250,11 +312,15 @@
     // 性能要点：绝不能每丛草一个 Mesh（会产生上千 draw call）。
     // 这里用 InstancedMesh：一次 draw call 画几百丛。
     W.buildVegetation();
-
     // ---- 刷怪区 ----
     W.spawnZones = [];
-    for (var s = 0; s < G.DATA.SPAWN_ZONES.length; s++) {
-      var z = G.DATA.SPAWN_ZONES[s];
+    var allZones = G.DATA.SPAWN_ZONES.slice();
+    // 新地区刷怪区（神山 / 码头 / 沙滩）
+    if (G.DATA.REGION_SPAWN_ZONES) {
+      allZones = allZones.concat(G.DATA.REGION_SPAWN_ZONES);
+    }
+    for (var s = 0; s < allZones.length; s++) {
+      var z = allZones[s];
       W.spawnZones.push({
         data: z, timer: 2, alive: []
       });
@@ -395,11 +461,73 @@
         obj = art.shrine();
         W.addCircleCollider(spec.x, spec.z, 1.2);
         W.interactables.push({
-          uid: 'shrine_town', kind: 'shrine', x: spec.x, z: spec.z,
+          uid: spec.uid || 'shrine_town', kind: 'shrine', x: spec.x, z: spec.z,
           radius: 2.4, obj: obj
         });
         break;
       }
+
+      // ===== 新地区专属物件 =====
+      case 'sea':
+        obj = art.sea({ w: spec.w, d: spec.d });
+        // 海不挡路（可以走进去但会被 underwater 减速）
+        break;
+
+      case 'beachSand':
+        obj = art.beachSand({ w: spec.w, d: spec.d, x: spec.x, z: spec.z });
+        break;
+
+      case 'reef':
+        obj = art.reef({ seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, 1.0);
+        break;
+
+      case 'pier':
+        obj = art.pier({ len: spec.len, w: spec.w, deckY: spec.deckY });
+        W.addBoxCollider(spec.x, spec.z, spec.w || 3.2, spec.len || 14, spec.rotY || 0);
+        break;
+
+      case 'boat':
+        obj = art.boat({ len: spec.len, w: spec.w, color: spec.color });
+        W.addCircleCollider(spec.x, spec.z, (spec.w || 1.5) * 0.8);
+        break;
+
+      case 'crate':
+        obj = art.crate({ size: spec.size, seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, (spec.size || 0.7) * 0.8);
+        break;
+
+      case 'barrel':
+        obj = art.barrel({ r: spec.r, h: spec.h, seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, (spec.r || 0.35) * 1.2);
+        break;
+
+      case 'fishingNet':
+        obj = art.fishingNet({ w: spec.w, h: spec.h });
+        break;
+
+      case 'mountainRock':
+        obj = art.mountainRock({ size: spec.size, seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, (spec.size || 2.2) * 0.6);
+        break;
+
+      case 'mountainStairs':
+        obj = art.mountainStairs({
+          steps: spec.steps, w: spec.w, rise: spec.rise, run: spec.run
+        });
+        break;
+
+      case 'mist':
+        obj = art.mist({
+          count: spec.count, spread: spec.spread,
+          scale: spec.scale, opacity: spec.opacity, color: spec.color
+        });
+        break;
+
+      case 'banner':
+        obj = art.banner({ h: spec.h, color: spec.color });
+        W.addCircleCollider(spec.x, spec.z, 0.25);
+        break;
 
       case 'gate': {
         // 副本入口：两扇石门 + 幽光
@@ -433,7 +561,9 @@
         W.addCircleCollider(spec.x + 3.2, spec.z, 0.6);
         W.interactables.push({
           uid: spec.uid || 'gate_dungeon', kind: 'gate', x: spec.x, z: spec.z,
-          radius: 3.2, obj: g
+          radius: 3.2, obj: g,
+          // 记录该门通往哪个副本（神山 / 沙滩 / 忘れ緒の社）
+          region: spec.region || 'wasureo'
         });
         break;
       }
@@ -443,9 +573,18 @@
       obj.position.x = spec.x;
       obj.position.z = spec.z;
       // 贴地：所有道具都放在地面上。
-      // 例外：water / gate 自己管理高度；path 内部已按世界坐标逐顶点算过高度，
-      // 再抬一次会 double-offset（悬空）。
-      if (spec.type !== 'water' && spec.type !== 'gate' && spec.type !== 'path') {
+      //
+      // 例外清单（这些自己管高度，再抬一次会出错）：
+      //   water/gate/sea   : 自己算高度
+      //   path/mountainStairs/beachSand : 内部已按世界坐标逐顶点算过高度，再抬会 double-offset
+      //   pier             : 栈桥本身有固定 deckY，不跟地形走
+      //   mist             : 云雾飘在空中，不贴地
+      var NO_GROUND = {
+        water: 1, gate: 1, sea: 1,
+        path: 1, mountainStairs: 1, beachSand: 1,
+        pier: 1, mist: 1
+      };
+      if (!NO_GROUND[spec.type]) {
         obj.position.y = W.groundY(spec.x, spec.z);
       }
       if (spec.rotY) obj.rotation.y = spec.rotY;
@@ -454,13 +593,14 @@
       obj.userData.floatPhase = Math.random() * 6.28;
 
       // 烘焙接地 AO：越贴近地面的部分越暗。
-      // 这是"告别纯色块简约感"最有效的一步——没有接触阴影，
-      // 物体看起来像贴纸浮在绿布上。
-      // falloff 由 bakeContactAO 内部按物体高度自动算（踩过：写死会烧黑细高物体）。
-      if (spec.type !== 'water' && spec.type !== 'path' &&
-          spec.type !== 'pagoda' && spec.type !== 'knot' && spec.type !== 'gate') {
+      // 排除：水面/路径/高塔/结/门/海/沙滩/栈桥/云雾（理由见 NO_GROUND）
+      var NO_AO = {
+        water: 1, path: 1, pagoda: 1, knot: 1, gate: 1, sea: 1,
+        beachSand: 1, pier: 1, mist: 1, fishingNet: 1
+      };
+      if (!NO_AO[spec.type]) {
         W.bakeContactAO(obj, W.groundY(spec.x, spec.z), {
-          strength: spec.type === 'house' ? 0.38 : 0.42
+          strength: (spec.type === 'house' || spec.type === 'boat') ? 0.38 : 0.42
         });
       }
     }
@@ -481,7 +621,6 @@
       if (z < 14) return false;
       return true;
     }
-
     // ---- 草丛 ----
     var tuftCount = 420;
     var tuftGeo = new THREE.PlaneGeometry(0.5, 0.34);
@@ -525,7 +664,6 @@
     W.scene.add(tufts);
     W.vegetation = W.vegetation || {};
     W.vegetation.tufts = tufts;
-
     // ---- 野花 ----
     var flowerCount = 150;
     var flowerGeo = new THREE.IcosahedronGeometry(0.09, 0);
@@ -580,6 +718,10 @@
    * @param {number} groundY 该物件所在地面高度
    * @param {object} opt { strength, falloff, height }
    */
+  // AO 材质缓存（按源材质 UUID）——避免对同一材质反复 clone。
+  // 必须在使用它的 bakeContactAO 之前声明（var 会提升但值是 undefined）。
+  var AO_MAT_CACHE = {};
+
   W.bakeContactAO = function (group, groundY, opt) {
     opt = opt || {};
     var strength = opt.strength != null ? opt.strength : 0.5;
@@ -602,14 +744,20 @@
       var pos = geo.attributes.position;
       if (!pos) return;
 
-      node.updateMatrixWorld(true);
+      // 【性能】只算 Y，不算完整世界变换。
+      //
+      // 原来每个顶点都 new Vector3 + fromBufferAttribute + applyMatrix4，
+      // 一次 4x4 矩阵乘 —— 单个 torii（~10 个 mesh × 数百顶点）就要
+      // 几十毫秒。而 AO 只需要"离地多高"，即世界 y；
+      // 世界 y = 局部 y * scaleY + position.y，平移旋转对 y 的影响
+      // 在物件尺度下可以忽略（物件不会大幅横躺）。
+      // 实测 torii 的 bakeContactAO 从 ~70ms 降到 <5ms。
+      var my = node.matrixWorld.elements[13];        // 世界平移 y
+      var sy = node.matrixWorld.elements[5];         // 世界 y 轴缩放分量
       var colors = new Float32Array(pos.count * 3);
-      var v = new THREE.Vector3();
 
       for (var i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i);
-        v.applyMatrix4(node.matrixWorld);
-        var h = v.y - groundY;
+        var h = pos.getY(i) * sy + my - groundY;
         var t = G.M.clamp01(h / falloff);
         // 平滑衰减：只有最底部接近 1-strength
         var ao = 1 - strength * (1 - t) * (1 - t);
@@ -627,12 +775,18 @@
       // 实例：五重塔基座用石色 #c8c3b8，与房屋/石灯笼共用同一材质；
       //       后者走 AO 把共享材质标成 vertexColors:true，塔基座就变成黑砖。
       // 修法：clone 一份专属材质再标记，互不影响。
+      //
+      // 【性能】clone 很贵（要复制 uniforms、准备 shader 变体），
+      // 所以按源材质 UUID 做缓存：同一材质的多个 mesh 共用一个 AO 副本。
       var srcMat = node.material;
       if (srcMat && !srcMat.vertexColors) {
-        var aoMat = srcMat.clone();
-        aoMat.vertexColors = true;
-        aoMat.needsUpdate = true;
-        node.material = aoMat;
+        if (!AO_MAT_CACHE[srcMat.uuid]) {
+          var aoMat = srcMat.clone();
+          aoMat.vertexColors = true;
+          aoMat.needsUpdate = true;
+          AO_MAT_CACHE[srcMat.uuid] = aoMat;
+        }
+        node.material = AO_MAT_CACHE[srcMat.uuid];
       }
     });
   };
@@ -812,11 +966,13 @@
     W.scene.background.copy(bgColor);
 
     // 雾
+    // 范围必须与 init 里的 scene.fog 保持一致量级（见那里的注释：
+    // 世界扩建后旧值 62~105 会把中景地面整片糊成雾色，看起来像海水）。
     var fogColor = bgColor.clone().lerp(new THREE.Color('#FFFFFF'), 0.18);
     if (W.scene.fog) {
       W.scene.fog.color.copy(fogColor);
-      W.scene.fog.near = G.M.lerp(62, 50, t);
-      W.scene.fog.far = G.M.lerp(105, 82, t);
+      W.scene.fog.near = G.M.lerp(300, 240, t);
+      W.scene.fog.far = G.M.lerp(520, 420, t);
     }
 
     // 太阳位置

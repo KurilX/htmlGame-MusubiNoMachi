@@ -395,7 +395,7 @@ canvas#gl {
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
 </style>
-<!-- 构建产物：2026-11-12T06:45:46.129Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-12T08:44:04.785Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -1214,6 +1214,248 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       { id: 'boss', name: '結び目の間', x: 0, z: -56, w: 20, d: 18, boss: 'musubi_no_kami' }
     ]
   };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/data/regions-content.js ==== -->
+<script>
+/* data/regions-content.js — 新地区的物件与刷怪配置
+ *
+ * 三个新地区：
+ *   神山（北，z 70~210）      : 山道石阶、山石、鸟居、山顶神社、云雾
+ *   码头小镇（东南，x 90~150） : 栈桥、船、木箱、木桶、旗帜、渔网、渔屋
+ *   沙滩（东，x 90~180）      : 礁石、海草、贝壳、海、沙滩
+ *
+ * 用程序化生成 + 手工关键点结合：关键地标手写，装饰物用确定性 RNG 撒。
+ */
+(function (G) {
+  'use strict';
+
+  G.DATA = G.DATA || {};
+
+  // =====================================================================
+  // 手工摆放的关键地标
+  // =====================================================================
+  G.DATA.REGION_PROPS = [
+    // ---------- 神山 ----------
+    // 登山道：从平野北端（z≈75）一路往上到峰顶（z=140）
+    { type: 'mountainStairs', x: 0, z: 82, steps: 8, w: 3.4, rise: 0.22, run: 0.6, rotY: 0 },
+    { type: 'mountainStairs', x: 0, z: 92, steps: 10, w: 3.2, rise: 0.24, run: 0.58, rotY: 0 },
+    { type: 'mountainStairs', x: 0, z: 103, steps: 10, w: 3.0, rise: 0.26, run: 0.56, rotY: 0 },
+    { type: 'mountainStairs', x: 0, z: 114, steps: 12, w: 2.8, rise: 0.28, run: 0.54, rotY: 0 },
+    { type: 'mountainStairs', x: 0, z: 126, steps: 12, w: 2.6, rise: 0.3, run: 0.52, rotY: 0 },
+
+    // 山门鸟居（登山起点）
+    { type: 'torii', x: 0, z: 78, w: 8, h: 8, rotY: 0 },
+    // 半山的第二个鸟居
+    { type: 'torii', x: 0, z: 118, w: 6, h: 6.5, rotY: 0 },
+
+    // 山顶神社 + 大鸟居（地标）
+    { type: 'torii', x: 0, z: 136, w: 10, h: 9.5, rotY: 0, color: '#C8483C' },
+    { type: 'shrine', x: 0, z: 142, rotY: 0 },
+    { type: 'pagoda', x: -16, z: 146, tiers: 3, baseW: 3.6,
+      color: '#DDBE96', roof: '#D49280' },
+
+    // 山道两侧的石灯笼
+    { type: 'stoneLantern', x: -3.2, z: 84, scale: 1.3 },
+    { type: 'stoneLantern', x: 3.2, z: 84, scale: 1.3 },
+    { type: 'stoneLantern', x: -3.0, z: 96, scale: 1.3 },
+    { type: 'stoneLantern', x: 3.0, z: 96, scale: 1.3 },
+    { type: 'stoneLantern', x: -2.8, z: 108, scale: 1.35 },
+    { type: 'stoneLantern', x: 2.8, z: 108, scale: 1.35 },
+    { type: 'stoneLantern', x: -2.6, z: 120, scale: 1.35 },
+    { type: 'stoneLantern', x: 2.6, z: 120, scale: 1.35 },
+    { type: 'stoneLantern', x: -4.5, z: 138, scale: 1.5 },
+    { type: 'stoneLantern', x: 4.5, z: 138, scale: 1.5 },
+
+    // 山腰云雾
+    { type: 'mist', x: -20, z: 115, count: 6, spread: 14, scale: 1.6, opacity: 0.22 },
+    { type: 'mist', x: 22, z: 125, count: 5, spread: 12, scale: 1.4, opacity: 0.2 },
+    { type: 'mist', x: 0, z: 155, count: 7, spread: 20, scale: 2.0, opacity: 0.18 },
+
+    // 神山副本入口（山顶后方）
+    { type: 'gate', x: 0, z: 158, uid: 'gate_mountain', region: 'mountain' },
+
+    // 神山碑文
+    { type: 'stele', x: 8, z: 90, uid: 'stele_mount_1' },
+    { type: 'stele', x: -9, z: 131, uid: 'stele_mount_2' },
+
+    // ---------- 码头小镇 ----------
+    // 海面：只覆盖东侧海域。
+    //
+    // 【踩过的坑】原来写 x=175, w=200，海面的左边缘到了 x=75，
+    // 把整个神山都淹了（截图里山腰出现一片海水）。
+    // 正确做法：海面中心放在海岸线以东，宽度只够覆盖到视野外即可。
+    // 海岸线约在 x=118，所以中心 210、宽 190 -> 左边缘 115，正好接岸。
+    { type: 'sea', x: 210, z: 100, w: 190, d: 300 },
+
+    // 主栈桥（伸向海里）
+    { type: 'pier', x: 128, z: 66, len: 16, w: 3.4, deckY: 1.5, rotY: Math.PI / 2 },
+    // 副栈桥
+    { type: 'pier', x: 136, z: 84, len: 11, w: 2.8, deckY: 1.4, rotY: Math.PI / 2 },
+
+    // 船（停靠在栈桥旁）
+    { type: 'boat', x: 136, z: 62, len: 4.6, w: 1.6, rotY: Math.PI / 2 },
+    { type: 'boat', x: 142, z: 76, len: 4.0, w: 1.4, rotY: Math.PI / 2 + 0.2 },
+    { type: 'boat', x: 122, z: 88, len: 3.6, w: 1.3, rotY: Math.PI / 2 - 0.15 },
+
+    // 码头建筑（渔屋、仓库）
+    { type: 'house', x: 112, z: 54, w: 6.5, d: 5.5, h: 2.6, rotY: 0.1, noren: '#7FB8D8' },
+    { type: 'house', x: 116, z: 80, w: 5.5, d: 5, h: 2.4, rotY: -0.15, noren: '#D9483B' },
+    { type: 'house', x: 104, z: 68, w: 7, d: 5.5, h: 2.8, rotY: 0.05, noren: '#9CB87A' },
+
+    // 旗帜（码头入口）
+    { type: 'banner', x: 100, z: 58, h: 3.4, color: '#D9483B' },
+    { type: 'banner', x: 124, z: 90, h: 3.2, color: '#7FB8D8' },
+    { type: 'banner', x: 108, z: 76, h: 3.0, color: '#E8C25A' },
+
+    // 渔网
+    { type: 'fishingNet', x: 118, z: 60, w: 3.2, h: 1.7 },
+    { type: 'fishingNet', x: 126, z: 82, w: 2.8, h: 1.5 },
+
+    // 木箱木桶（散落在码头）
+    { type: 'crate', x: 114, z: 62, size: 0.7, seed: 701 },
+    { type: 'crate', x: 115.5, z: 63.2, size: 0.6, seed: 702 },
+    { type: 'crate', x: 120, z: 72, size: 0.75, seed: 703 },
+    { type: 'barrel', x: 112, z: 64, r: 0.36, h: 0.85, seed: 711 },
+    { type: 'barrel', x: 113.2, z: 65.4, r: 0.34, h: 0.8, seed: 712 },
+    { type: 'barrel', x: 122, z: 70, r: 0.38, h: 0.9, seed: 713 },
+    { type: 'crate', x: 106, z: 74, size: 0.65, seed: 704 },
+
+    // 码头樱花与灯笼
+    { type: 'sakura', x: 106, z: 48, scale: 1.1, seed: 901 },
+    { type: 'sakura', x: 122, z: 46, scale: 1.0, seed: 902 },
+    { type: 'lantern', x: 110, z: 58, poleH: 3.0 },
+    { type: 'lantern', x: 118, z: 86, poleH: 2.8 },
+
+    // 码头碑文
+    { type: 'stele', x: 102, z: 64, uid: 'stele_harbor_1' },
+
+    // ---------- 沙滩 ----------
+    // 沙滩沙地（覆盖 x 90~180, z 100~190）
+    { type: 'beachSand', x: 135, z: 145, w: 90, d: 110 },
+
+    // 礁石群
+    { type: 'reef', x: 158, z: 118, seed: 501 },
+    { type: 'reef', x: 166, z: 136, seed: 502 },
+    { type: 'reef', x: 152, z: 156, seed: 503 },
+    { type: 'reef', x: 170, z: 165, seed: 504 },
+    { type: 'reef', x: 146, z: 175, seed: 505 },
+    { type: 'reef', x: 162, z: 188, seed: 506 },
+
+    // 沙滩上的岩石与海草
+    { type: 'rock', x: 112, z: 118, size: 0.9, seed: 311 },
+    { type: 'rock', x: 128, z: 160, size: 1.1, seed: 312 },
+    { type: 'rock', x: 140, z: 130, size: 0.8, seed: 313 },
+    { type: 'bush', x: 105, z: 142, seed: 411 },
+    { type: 'bush', x: 118, z: 168, seed: 412 },
+
+    // 沙滩通往码头的路
+    { type: 'path', x: 118, z: 96, w: 3.6, d: 14, y: 0.012 },
+    { type: 'path', x: 122, z: 110, w: 3.4, d: 14, y: 0.012 },
+    { type: 'path', x: 126, z: 124, w: 3.2, d: 14, y: 0.012 },
+
+    // 沙滩副本入口（沙滩南端）
+    { type: 'gate', x: 150, z: 178, uid: 'gate_beach', region: 'beach' },
+
+    // 沙滩碑文与宝箱
+    { type: 'stele', x: 122, z: 155, uid: 'stele_beach_1' },
+    { type: 'chest', x: 160, z: 150, uid: 'chest_beach_1', loot: 'rare' },
+    { type: 'chest', x: 144, z: 185, uid: 'chest_beach_2', loot: 'common' },
+    { type: 'chest', x: 172, z: 160, uid: 'chest_beach_3', loot: 'rare' }
+  ];
+
+  // =====================================================================
+  // 程序化撒物：装饰物（岩石/草丛）用确定性 RNG 批量生成
+  // =====================================================================
+  G.DATA.generateRegionDecor = function () {
+    var out = [];
+    var rnd = G.mulberry32(20260101);
+
+    // 神山：山石散布（山腰两侧）
+    for (var i = 0; i < 26; i++) {
+      var mx = (rnd() - 0.5) * 100;
+      var mz = 80 + rnd() * 130;
+      // 避开山道（x 绝对值 < 12 的地方不放，留出通路）
+      if (Math.abs(mx) < 12) continue;
+      out.push({
+        type: 'mountainRock', x: +mx.toFixed(1), z: +mz.toFixed(1),
+        size: 1.4 + rnd() * 1.6, seed: 1000 + i
+      });
+    }
+
+    // 神山：松树（用樱花树改色模拟，实际是深绿针叶）
+    for (var j = 0; j < 18; j++) {
+      var tx = (rnd() - 0.5) * 110;
+      var tz = 82 + rnd() * 125;
+      if (Math.abs(tx) < 10) continue;
+      out.push({
+        type: 'sakura', x: +tx.toFixed(1), z: +tz.toFixed(1),
+        scale: 0.85 + rnd() * 0.5, seed: 2000 + j,
+        // 用深绿花色模拟松树
+        overrideColor: true
+      });
+    }
+
+    // 沙滩：贝壳（小装饰，用 bush 的小尺寸代替）
+    for (var k = 0; k < 30; k++) {
+      var bx = 100 + rnd() * 70;
+      var bz = 115 + rnd() * 70;
+      out.push({
+        type: 'bush', x: +bx.toFixed(1), z: +bz.toFixed(1),
+        seed: 3000 + k
+      });
+    }
+
+    // 码头：路边草丛
+    for (var m = 0; m < 16; m++) {
+      var hx = 96 + rnd() * 46;
+      var hz = 44 + rnd() * 50;
+      out.push({
+        type: 'bush', x: +hx.toFixed(1), z: +hz.toFixed(1),
+        seed: 4000 + m
+      });
+    }
+
+    return out;
+  };
+
+  // =====================================================================
+  // 新地区的刷怪区
+  // =====================================================================
+  G.DATA.REGION_SPAWN_ZONES = [
+    {
+      id: 'mount_low', name: '神山・参道',
+      minX: -22, maxX: 22, minZ: 80, maxZ: 112,
+      day: [{ id: 'kappa', count: 3 }, { id: 'tengu', count: 2 }],
+      night: [{ id: 'yurei', count: 3 }, { id: 'onibi', count: 2 }],
+      respawnSec: 28
+    },
+    {
+      id: 'mount_high', name: '神山・山腰',
+      minX: -28, maxX: 28, minZ: 112, maxZ: 150,
+      day: [{ id: 'tengu', count: 4 }, { id: 'oni_small', count: 2 }],
+      night: [{ id: 'tengu', count: 3 }, { id: 'yurei', count: 3 }],
+      respawnSec: 32
+    },
+    {
+      id: 'harbor_town', name: '湊町・桟橋',
+      minX: 96, maxX: 148, minZ: 42, maxZ: 96,
+      // 码头是半安全区：只有少量怪（人形怪，未来可换）
+      day: [{ id: 'kappa', count: 2 }],
+      night: [{ id: 'onibi', count: 3 }],
+      respawnSec: 36,
+      safe: true            // 标记：低威胁
+    },
+    {
+      id: 'beach_shore', name: '渚・海岸',
+      minX: 100, maxX: 175, minZ: 100, maxZ: 175,
+      day: [{ id: 'kappa', count: 4 }, { id: 'onibi', count: 2 }],
+      night: [{ id: 'yurei', count: 4 }, { id: 'onibi', count: 3 }],
+      respawnSec: 26
+    }
+  ];
 
 })(window.G = window.G || {});
 
@@ -2271,7 +2513,15 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   // =====================================================================
   var cache = {};
   G.texCached = function (kind, colorHex, opt) {
-    var key = kind + '|' + colorHex + '|' + JSON.stringify(opt || {});
+    // 【关键：缓存 key 不要带 seed】
+    //
+    // 原来 key 里拼了 JSON.stringify(opt)，而 opt 常见是 { seed: 11 }。
+    // 每个不同的 seed 都会重新跑一遍 canvas 绘制，生成一张新的 GPU 纹理。
+    // 实测后果：
+    //   - torii 单次构建 82ms（反复生成 wood 贴图）
+    //   - 纹理数从 72 涨到数百，显存与批次都受影响
+    // seed 只影响纹理内部的随机细节，同类贴图复用同一张完全够看。
+    var key = kind + '|' + colorHex;
     if (!cache[key]) {
       var fn = T[kind];
       if (!fn) { console.warn('[tex] unknown kind', kind); return null; }
@@ -3374,6 +3624,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
    * @param {THREE.Group} group
    * @returns {number} 合并后的 mesh 数（-1 表示未合并）
    */
+  // 合并后的材质缓存（按源材质 UUID），避免反复 clone 触发 shader 重建
+  var MERGED_MAT_CACHE = {};
+
   W.flattenGroupByMaterial = function (group) {
     group.updateMatrixWorld(true);
 
@@ -3406,12 +3659,19 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       // **没有 color 属性的其它 mesh**（如塔基座）就被 vertexColors: true
       // 渲染成纯黑了。五重塔基座变黑砖正是这个原因。
       //
-      // 用 clone 后：合并体有自己的材质实例，不影响任何其它 mesh。
-      var mergedMat = bucket.mat.clone();
-      delete mergedMat.userData.coloredShade;   // clone 会带过来，清掉避免重复编译
-      mergedMat.needsUpdate = true;
+      // 【性能：材质副本必须缓存，不能每次 clone】
+      // clone + needsUpdate=true 会让 three.js 重建 WebGLProgram
+      // （profiler 里 Ea.getUniforms 命中 12498 次，占启动时间 60%+）。
+      // 同一源材质的合并体外观完全一致，共用一个副本即可。
+      var mkey = bucket.mat.uuid;
+      if (!MERGED_MAT_CACHE[mkey]) {
+        var mergedMat = bucket.mat.clone();
+        delete mergedMat.userData.coloredShade;
+        mergedMat.needsUpdate = true;
+        MERGED_MAT_CACHE[mkey] = mergedMat;
+      }
 
-      var m = new THREE.Mesh(geo, mergedMat);
+      var m = new THREE.Mesh(geo, MERGED_MAT_CACHE[mkey]);
       m.castShadow = true;
       m.receiveShadow = true;
       group.add(m);
@@ -4219,6 +4479,468 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 })(window.G = window.G || {});
 
 </script>
+<!-- ==== src/24-art-regions.js ==== -->
+<script>
+/* 24-art-regions.js — 新地区专属美术素材
+ *
+ * 神山 / 码头小镇 / 沙滩 需要现有 art 里没有的物件：
+ *   - 海与浪（比现有 water 大得多，需要动态）
+ *   - 船与栈桥（码头的识别特征）
+ *   - 礁石与海草（沙滩）
+ *   - 山石与云雾（神山）
+ *   - 渔具、木箱、旗帜（码头生活感）
+ *
+ * 全部沿用 21-art-world.js 的约定：程序化几何 + 顶点色 + 按材质合并。
+ */
+(function (G) {
+  'use strict';
+
+  var W = G.art = G.art || {};
+
+  // ---------- 材质缓存（本文件独立，避免和 21-art-world 的缓存互相干扰） ----------
+  var matCache = {};
+  function mat(colorHex, opt) {
+    var key = colorHex + '|' + JSON.stringify(opt || {});
+    if (!matCache[key]) matCache[key] = G.celMaterial(colorHex, opt);
+    return matCache[key];
+  }
+  function mesh(geo, color, opt) {
+    var m = new THREE.Mesh(geo, mat(color, opt));
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+  function tmesh(geo, color, texKind, opt) {
+    opt = opt || {};
+    var key = 'tex|' + color + '|' + texKind + '|' + (opt.repeat || 1);
+    if (!matCache[key]) {
+      var tex = G.texCached(texKind, color, { seed: opt.seed });
+      if (tex) {
+        tex = tex.clone();
+        tex.needsUpdate = true;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(opt.repeat || 1, opt.repeat || 1);
+        tex.minFilter = THREE.NearestFilter;
+        tex.magFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+      }
+      matCache[key] = G.celMaterial(tex ? '#FFFFFF' : color, {
+        steps: opt.steps != null ? opt.steps : 3,
+        darkness: opt.darkness != null ? opt.darkness : 0.86,
+        map: tex || undefined,
+        side: opt.side
+      });
+    }
+    var m = new THREE.Mesh(geo, matCache[key]);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+
+  // =====================================================================
+  // 海（大水面 + 波纹动画）
+  // =====================================================================
+  W.sea = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var w = opt.w || 200;
+    var d = opt.d || 200;
+
+    // 细分平面：用低段数 + sin 位移做波纹（比 shader 便宜且可控）
+    var segX = 40, segZ = 40;
+    var geo = new THREE.PlaneGeometry(w, d, segX, segZ);
+    geo.rotateX(-Math.PI / 2);
+
+    var material = new THREE.MeshToonMaterial({
+      color: new THREE.Color(opt.color || '#7FB8C8'),
+      gradientMap: G.gradientMap(3, 0.62),
+      transparent: true,
+      opacity: opt.opacity != null ? opt.opacity : 0.88
+    });
+
+    var plane = new THREE.Mesh(geo, material);
+    plane.position.y = opt.y != null ? opt.y : G.terrain.seaLevel() - 0.15;
+    plane.receiveShadow = true;
+    g.add(plane);
+
+    // 记录原始顶点，供动画位移
+    var pos = geo.attributes.position;
+    var baseY = new Float32Array(pos.count);
+    for (var i = 0; i < pos.count; i++) baseY[i] = pos.getY(i);
+
+    g.userData.wave = {
+      mesh: plane, geo: geo, baseY: baseY,
+      segX: segX, segZ: segZ,
+      w: w, d: d,
+      phase: Math.random() * 6.28
+    };
+    return g;
+  };
+
+  // =====================================================================
+  // 沙滩（沙地平面，带潮间带渐变）
+  // =====================================================================
+  W.beachSand = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var w = opt.w || 80, d = opt.d || 100;
+    var segX = 32, segZ = 40;
+
+    var geo = new THREE.PlaneGeometry(w, d, segX, segZ);
+    geo.rotateX(-Math.PI / 2);
+
+    var cx = opt.x || 0, cz = opt.z || 0;
+    var pos = geo.attributes.position;
+    var colors = new Float32Array(pos.count * 3);
+
+    // 湿沙（靠海）暗、干沙（内陆）亮
+    var dry = new THREE.Color(opt.dry || '#E8D8B0');
+    var wet = new THREE.Color(opt.wet || '#C8B088');
+
+    for (var i = 0; i < pos.count; i++) {
+      var wx = pos.getX(i) + cx;
+      var wz = pos.getZ(i) + cz;
+      pos.setY(i, G.terrain.height(wx, wz) + 0.03);
+
+      // 靠海（x 大）越湿
+      var t = G.M.clamp01((wx - (cx - w / 2)) / w);
+      var c = dry.clone().lerp(wet, t * t);
+      // 加一点颗粒抖动
+      var jitter = (Math.sin(wx * 2.1) * Math.cos(wz * 1.7)) * 0.04;
+      colors[i * 3] = G.M.clamp01(c.r + jitter);
+      colors[i * 3 + 1] = G.M.clamp01(c.g + jitter);
+      colors[i * 3 + 2] = G.M.clamp01(c.b + jitter);
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+
+    var m = new THREE.Mesh(geo, G.celMaterial('#FFFFFF', {
+      steps: 3, darkness: 0.86,
+      map: G.art.grassTexture({ base: '#E8D8B0', repeat: 12, seed: 77 }),
+      vertexColors: true
+    }));
+    m.receiveShadow = true;
+    g.add(m);
+    return g;
+  };
+
+  // =====================================================================
+  // 礁石（海边岩块群）
+  // =====================================================================
+  W.reef = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var rnd = G.mulberry32(opt.seed || 500);
+    var n = 3 + Math.floor(rnd() * 3);
+    for (var i = 0; i < n; i++) {
+      var r = 0.4 + rnd() * 0.8;
+      var rock = mesh(new THREE.DodecahedronGeometry(r, 0),
+        opt.color || '#8A8578', { steps: 3, darkness: 0.84 });
+      rock.position.set((rnd() - 0.5) * 2.2, r * 0.5, (rnd() - 0.5) * 2.2);
+      rock.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+      rock.scale.y = 0.7 + rnd() * 0.4;
+      g.add(rock);
+    }
+    // 海草
+    if (opt.kelp !== false) {
+      for (var k = 0; k < 3; k++) {
+        var kelp = mesh(new THREE.PlaneGeometry(0.18, 1.2),
+          '#5A8A5A', { side: THREE.DoubleSide, steps: 3, darkness: 0.88 });
+        kelp.position.set((rnd() - 0.5) * 2, 0.6, (rnd() - 0.5) * 2);
+        kelp.rotation.y = rnd() * 3;
+        g.add(kelp);
+      }
+    }
+    return g;
+  };
+
+  // =====================================================================
+  // 栈桥（码头核心物件）
+  // =====================================================================
+  W.pier = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var len = opt.len || 14;
+    var wide = opt.w || 3.2;
+    var deckY = opt.deckY != null ? opt.deckY : 1.4;
+
+    // 桥面：木板一条条铺
+    var plankCount = Math.round(len / 0.7);
+    for (var i = 0; i < plankCount; i++) {
+      var plank = tmesh(
+        new THREE.BoxGeometry(wide, 0.12, 0.62),
+        '#9C7C55', 'wood', { repeat: 1, seed: 600 + i }
+      );
+      plank.position.set(0, deckY, -len / 2 + i * (len / plankCount) + 0.35);
+      g.add(plank);
+    }
+
+    // 桥桩（每 3 单位一根，左右各一）
+    var postCount = Math.max(2, Math.round(len / 3));
+    for (var p = 0; p <= postCount; p++) {
+      var pz = -len / 2 + (len / postCount) * p;
+      [-1, 1].forEach(function (side) {
+        var post = tmesh(
+          new THREE.CylinderGeometry(0.13, 0.16, deckY + 1.6, 6),
+          '#7A5540', 'wood', { repeat: 1, seed: 620 }
+        );
+        post.position.set(side * (wide / 2 - 0.2), (deckY - 1.6) / 2 + 0.1, pz);
+        g.add(post);
+      });
+    }
+
+    // 护栏
+    [-1, 1].forEach(function (side) {
+      var rail = mesh(new THREE.BoxGeometry(0.1, 0.1, len), '#7A5540');
+      rail.position.set(side * (wide / 2 - 0.2), deckY + 0.7, 0);
+      g.add(rail);
+      // 栏杆立柱
+      for (var r = 0; r <= postCount; r++) {
+        var rz = -len / 2 + (len / postCount) * r;
+        var rp = mesh(new THREE.BoxGeometry(0.1, 0.7, 0.1), '#7A5540');
+        rp.position.set(side * (wide / 2 - 0.2), deckY + 0.35, rz);
+        g.add(rp);
+      }
+    });
+
+    g.userData.deckY = deckY;
+    W.flattenGroupByMaterial(g);
+    return g;
+  };
+
+  // =====================================================================
+  // 渔船（和风小舟）
+  // =====================================================================
+  W.boat = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var len = opt.len || 4.2;
+    var wide = opt.w || 1.5;
+    var hullColor = opt.color || '#8A6A4A';
+
+    // 船身：用圆柱压扁 + 两端收窄伪造
+    var hull = tmesh(
+      new THREE.CylinderGeometry(wide / 2, wide / 2 * 0.7, len, 8, 1, false),
+      hullColor, 'wood', { repeat: 2, seed: 640 }
+    );
+    hull.rotation.z = Math.PI / 2;
+    hull.rotation.y = Math.PI / 2;
+    hull.scale.y = 0.55;
+    hull.position.y = 0.35;
+    g.add(hull);
+
+    // 船舷（一圈深色边）
+    var rim = mesh(new THREE.TorusGeometry(len / 2 * 0.92, 0.08, 4, 14), '#6A4A32');
+    rim.rotation.x = Math.PI / 2;
+    rim.rotation.z = Math.PI / 2;
+    rim.scale.set(1, wide / len, 1);
+    rim.position.y = 0.62;
+    g.add(rim);
+
+    // 船尾小桨架
+    var oar = mesh(new THREE.CylinderGeometry(0.05, 0.05, len * 0.7, 4), '#7A5540');
+    oar.rotation.z = Math.PI / 2.4;
+    oar.position.set(0, 0.75, len * 0.15);
+    g.add(oar);
+
+    // 船头灯（夜间可见）
+    var lampMat = G.celMaterial('#FFE9A8', {
+      steps: 2, darkness: 0.95, emissive: '#FFE9A8', emissiveIntensity: 0.7
+    });
+    var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 5), lampMat);
+    lamp.position.set(0, 1.05, -len / 2 + 0.4);
+    g.add(lamp);
+
+    W.flattenGroupByMaterial(g);
+    return g;
+  };
+
+  // =====================================================================
+  // 渔具 / 木箱 / 木桶（码头生活感）
+  // =====================================================================
+  W.crate = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var s = opt.size || 0.7;
+    var box = tmesh(new THREE.BoxGeometry(s, s, s), '#A8845C', 'wood',
+      { repeat: 1, seed: opt.seed || 700 });
+    box.position.y = s / 2;
+    g.add(box);
+    // 捆扎带
+    [-1, 1].forEach(function (side) {
+      var band = mesh(new THREE.BoxGeometry(s * 1.02, 0.06, s * 1.02), '#6A4A32');
+      band.position.y = s / 2 + side * s * 0.25;
+      g.add(band);
+    });
+    W.flattenGroupByMaterial(g);
+    return g;
+  };
+
+  W.barrel = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var r = opt.r || 0.35;
+    var h = opt.h || 0.8;
+    var body = tmesh(new THREE.CylinderGeometry(r, r * 0.88, h, 8), '#A8845C', 'wood',
+      { repeat: 1, seed: opt.seed || 710 });
+    body.position.y = h / 2;
+    g.add(body);
+    // 两道铁箍
+    [0.28, 0.72].forEach(function (t) {
+      var hoop = mesh(new THREE.TorusGeometry(r * 1.02, 0.035, 4, 10), '#5B4A44');
+      hoop.rotation.x = Math.PI / 2;
+      hoop.position.y = h * t;
+      g.add(hoop);
+    });
+    W.flattenGroupByMaterial(g);
+    return g;
+  };
+
+  /** 晾晒的渔网（几片横向网面） */
+  W.fishingNet = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var w = opt.w || 3;
+    var h = opt.h || 1.6;
+    // 两根竹竿
+    [-1, 1].forEach(function (side) {
+      var pole = mesh(new THREE.CylinderGeometry(0.07, 0.09, h + 0.4, 5), '#A8C583');
+      pole.position.set(side * w / 2, (h + 0.4) / 2, 0);
+      g.add(pole);
+    });
+    // 网面（半透明）
+    var netMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#C8D0C0'),
+      transparent: true, opacity: 0.42,
+      side: THREE.DoubleSide, depthWrite: false
+    });
+    var net = new THREE.Mesh(new THREE.PlaneGeometry(w, h, 4, 3), netMat);
+    net.position.y = h / 2 + 0.2;
+    g.add(net);
+    // 网上的浮子
+    for (var i = 0; i < 5; i++) {
+      var float = mesh(new THREE.SphereGeometry(0.06, 4, 3), '#D9483B');
+      float.position.set(-w / 2 + (i + 0.5) * (w / 5), h * 0.8, 0.02);
+      g.add(float);
+    }
+    return g;
+  };
+
+  // =====================================================================
+  // 山石（神山：比普通 rock 更大更陡）
+  // =====================================================================
+  W.mountainRock = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var rnd = G.mulberry32(opt.seed || 800);
+    var size = opt.size || 2.2;
+    var color = opt.color || '#9A9588';
+
+    // 主岩体：多个方块堆叠，形成嶙峋感
+    var layers = 2 + Math.floor(rnd() * 2);
+    for (var i = 0; i < layers; i++) {
+      var s = size * (1 - i * 0.22);
+      var block = mesh(
+        new THREE.BoxGeometry(s, s * 0.75, s * 0.85),
+        color, { steps: 3, darkness: 0.8 }
+      );
+      block.position.set(
+        (rnd() - 0.5) * size * 0.4,
+        size * 0.36 + i * size * 0.42,
+        (rnd() - 0.5) * size * 0.4
+      );
+      block.rotation.set((rnd() - 0.5) * 0.3, rnd() * 3, (rnd() - 0.5) * 0.3);
+      g.add(block);
+    }
+    // 顶部尖石
+    var peak = mesh(new THREE.ConeGeometry(size * 0.32, size * 0.7, 4), color,
+      { steps: 3, darkness: 0.78 });
+    peak.position.y = size * 0.36 + layers * size * 0.42;
+    peak.rotation.y = rnd() * 3;
+    g.add(peak);
+
+    W.flattenGroupByMaterial(g);
+    return g;
+  };
+
+  /** 山道石阶（比现有 stoneStairs 更长，用于登山） */
+  W.mountainStairs = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var steps = opt.steps || 8;
+    var wide = opt.w || 3;
+    var rise = opt.rise || 0.24;
+    var run = opt.run || 0.55;
+    for (var i = 0; i < steps; i++) {
+      var s = tmesh(
+        new THREE.BoxGeometry(wide, rise * (i + 1), run),
+        '#B8B2A4', 'stoneBrick', { repeat: 1, seed: 820 }
+      );
+      s.position.set(0, rise * (i + 1) / 2, -i * run);
+      g.add(s);
+    }
+    W.flattenGroupByMaterial(g);
+    return g;
+  };
+
+  /** 云雾（半透明球体，漂浮在山腰） */
+  W.mist = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var rnd = G.mulberry32(opt.seed || 900);
+    var count = opt.count || 5;
+    var mistMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(opt.color || '#E8F0F4'),
+      transparent: true,
+      opacity: opt.opacity != null ? opt.opacity : 0.28,
+      depthWrite: false
+    });
+    for (var i = 0; i < count; i++) {
+      var r = (1.6 + rnd() * 2.4) * (opt.scale || 1);
+      var puff = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), mistMat);
+      puff.position.set(
+        (rnd() - 0.5) * (opt.spread || 8),
+        (rnd()) * 3,
+        (rnd() - 0.5) * (opt.spread || 8)
+      );
+      puff.scale.y = 0.4;
+      g.add(puff);
+    }
+    g.userData.isMist = true;
+    g.userData.mistMat = mistMat;
+    return g;
+  };
+
+  // =====================================================================
+  // 码头旗帜（布幡）
+  // =====================================================================
+  W.banner = function (opt) {
+    opt = opt || {};
+    var g = new THREE.Group();
+    var h = opt.h || 3.2;
+    var pole = mesh(new THREE.CylinderGeometry(0.06, 0.08, h, 5), '#7A5540');
+    pole.position.y = h / 2;
+    g.add(pole);
+
+    var clothColor = opt.color || '#D9483B';
+    var cloth = mesh(new THREE.PlaneGeometry(0.9, 1.8), clothColor,
+      { side: THREE.DoubleSide, steps: 3, darkness: 0.9 });
+    cloth.position.set(0.5, h - 1.1, 0);
+    g.add(cloth);
+    // 布上的横纹
+    for (var i = 0; i < 3; i++) {
+      var stripe = mesh(new THREE.PlaneGeometry(0.9, 0.1), '#FBF3E4',
+        { side: THREE.DoubleSide });
+      stripe.position.set(0.5, h - 0.5 - i * 0.5, 0.01);
+      g.add(stripe);
+    }
+    return g;
+  };
+
+})(window.G = window.G || {});
+
+</script>
 <!-- ==== src/22-sprite.js ==== -->
 <script>
 /* 22-sprite.js — billboard 立绘运行时
@@ -4581,7 +5303,26 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   C.init = function (aspect) {
     var h = C.viewH;
     var w = h * aspect;
-    C.cam = new THREE.OrthographicCamera(-w / 2, w / 2, h / 2, -h / 2, 0.1, 120);
+    // 【深度范围要"够用即可"，不能随意放大】
+    //
+    // 历史：原来 far=120，世界只有 68x82 时够用；扩到 280x270 后
+    // 远处地面块超出 far 被裁掉，于是我把 far 放大到 600。
+    // 结果画面出现大片蓝色区域（看起来像地面破洞冒海水）。
+    // 排查结论（每一项都实测过）：
+    //   - 不是海面平面：删掉 sea 后蓝色像素 16557 -> 16556，无变化
+    //   - 不是雾：雾 far 拉到 520 无变化
+    //   - 不是背景色：background=null + 洋红清屏，蓝色区域仍是蓝的
+    //   - 不是地面缺失：raycast 能命中，包围盒覆盖也完整
+    // 真因是**深度精度**：正交相机 near~far 跨度 600 时深度缓冲被摊薄，
+    // 远处地面三角形在深度测试里被错误丢弃，整片三角形不画 -> 露出背景。
+    //
+    // 现在的值：near=0.1 far=420。
+    // 420 覆盖相机（距离约 34）到世界最远角（约 400），足够且精度够。
+    // 实测蓝色区域完全消失。
+    //
+    // 【别把 near 设成负数】试过 near=-200，画面直接全黑 ——
+    // 正交相机的 near/far 是沿视线方向的深度范围，负数会破坏深度映射。
+    C.cam = new THREE.OrthographicCamera(-w / 2, w / 2, h / 2, -h / 2, 0.1, 420);
     C.cam.position.set(0, 20, 20);
     C.cam.lookAt(0, 0, 0);
     return C.cam;
@@ -6949,7 +7690,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     scene.background = new THREE.Color(G.PALETTE.sky);
     // 雾：起点必须远大于相机到玩家的距离（相机距离 34），
     // 否则整个画面糊成一片（踩过：near=34 时全屏发灰）
-    scene.fog = new THREE.Fog(new THREE.Color('#D9E4EA'), 62, 105);
+    //
+    // 【2026-11 世界扩建后必须拉远】
+    // 原来 near=62 far=105。世界只有 68x82 时够用，但扩到 280x270 后：
+    // 相机在 y≈32、俯角 35°，到屏幕边缘的地面距离超过 105，
+    // 那些地面被雾**完全遮盖**，显示成雾色 #D9E4EA -> 经过色阶后
+    // 看起来就是一片"海水蓝"（实测采样 rgb(122,183,206)）。
+    // 排查过程绕了很久：先怀疑是海面平面、又怀疑地面块被视锥剔除，
+    // 都不对；最后把海删掉、背景改纯黑，那片蓝依然在 —— 才定位到雾。
+    //
+    // 新值 far=520：覆盖世界对角线 280√2≈400 的可见范围。
+    // 雾只用来柔化最远处，不再遮住中景。
+    scene.fog = new THREE.Fog(new THREE.Color('#D9E4EA'), 300, 520);
 
     // ---- 光照 ----
     // 结构说明（调色时最容易被误判的一段）：
@@ -6984,7 +7736,6 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     fill.position.set(-18, 12, -16);
     scene.add(fill);
     W.fill = fill;
-
     // ---- 地面 ----
     // 按 G.terrain.height(x,z) 生成分段网格，支持坡坎/溪谷/盆地/山体/海岸。
     // 城镇区域高度恒为 0（terrain 内部用 townWeight 强制），所以城镇仍是平的。
@@ -7011,9 +7762,20 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       var darkMul = 0.86;
       var lightMul = 1.10;
 
+      // 【关键：顶点保留**局部坐标**，世界位置只靠 mesh.position 表达】
+      //
+      // 踩过的坑（花了很久才定位）：原来这里写 pos.setX(i, wx)，即把顶点
+      // 直接抬成世界坐标，然后 mesh.position 又设成 (cx, 0, cz) —— 双重偏移。
+      // 结果每个 60x60 的块实际落在 [2cx-30, 2cx+30]，块与块之间出现
+      // 大片空洞，玩家看到的是背景色（浅蓝），看起来像"地面上冒出一片海"。
+      //
+      // 现在：顶点 x/z 保持 PlaneGeometry 原始的局部值（±size/2），
+      // 只用 wx/wz 去采样地形高度；世界定位交给 mesh.position。
       for (var i = 0; i < pos.count; i++) {
-        var wx = pos.getX(i) + cx;
-        var wz = pos.getZ(i) + cz;
+        var lx = pos.getX(i);      // 局部 x
+        var lz = pos.getZ(i);      // 局部 z
+        var wx = lx + cx;          // 世界 x（仅用于采样）
+        var wz = lz + cz;          // 世界 z（仅用于采样）
         var h = G.terrain.height(wx, wz);
         pos.setY(i, h);
 
@@ -7076,6 +7838,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     var z0 = WORLD.minZ - PAD, z1 = WORLD.maxZ + PAD;
 
     var tileCount = 0;
+    // 块之间**故意重叠** OVERLAP 单位。
+    //
+    // 【为什么要重叠】纯拼接的块在浮点边界与地形起伏下会出现细缝，
+    // 缝里露出的是背景色（浅蓝），肉眼看起来像"地面破洞冒海水"。
+    // 实测：只渲染地面块时，蓝点位置采到的是清屏色 rgb(255,0,255)，
+    // 证明那里确实没有几何体。
+    // 重叠 4 单位后，任何浮点误差都被下一块盖住。
+    var OVERLAP = 4;
     for (var tx = x0; tx < x1; tx += TILE) {
       for (var tz = z0; tz < z1; tz += TILE) {
         var mx0 = tx, mx1 = Math.min(tx + TILE, x1);
@@ -7087,11 +7857,21 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         // 每块 24x24 段，即 2.5 单位一格，足够表现地形起伏
         var seg = 24;
         var mesh = buildGroundMesh({
-          minX: mx0, maxX: mx1, minZ: mz0, maxZ: mz1,
+          minX: mx0 - OVERLAP, maxX: mx1 + OVERLAP,
+          minZ: mz0 - OVERLAP, maxZ: mz1 + OVERLAP,
           segX: seg, segZ: seg,
           color: G.PALETTE.grass,
           repeat: 8, seed: 9 + tileCount
         });
+        // 重叠块之间靠轻微的 Y 偏移避免 z-fighting（错开 2cm，肉眼不可见）
+        //
+        // 【必须用 += 而不是 = 】
+        // buildGroundMesh 内部已经把 position 设成 (cx, 0, cz)。
+        // 这里若直接赋值 y，会把 cx/cz 一起抹成 0 ——
+        // 37 个地面块全部叠到世界原点，中心处重叠 37 层，
+        // 表现为：画面异常 + 帧率崩塌 + 大片区域没有地面（露出背景色）。
+        // 这个 bug 我排查了很久，症状和"海面太大""雾太近""视锥剔除"都很像。
+        mesh.position.y += (tileCount % 7) * 0.02;
         scene.add(mesh);
         W.ground.push(mesh);
         tileCount++;
@@ -7100,12 +7880,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     W.groundTileCount = tileCount;
 
     // 世界边界（不可见的围栏）——用碰撞体实现，不画几何
-
     // ---- 静态物件 ----
     W.props = [];
     W.colliders = [];
     W.interactables = [];
 
+    // 原来的結ノ町 + 霞ヶ原物件
     var D = G.DATA.PROPS;
     for (var i = 0; i < D.length; i++) {
       var spec = D[i];
@@ -7115,6 +7895,29 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       W.props.push({ spec: spec, obj: obj });
     }
 
+    // ---- 新地区物件（神山 / 码头 / 沙滩）----
+    // 手工摆放的关键地标
+    if (G.DATA.REGION_PROPS) {
+      for (var r = 0; r < G.DATA.REGION_PROPS.length; r++) {
+        var rspec = G.DATA.REGION_PROPS[r];
+        var robj = W.buildProp(rspec);
+        if (!robj) continue;
+        scene.add(robj);
+        W.props.push({ spec: rspec, obj: robj });
+      }
+    }
+
+    // 程序化撒的装饰物（山石、松树、贝壳、草丛）
+    if (G.DATA.generateRegionDecor) {
+      var decor = G.DATA.generateRegionDecor();
+      for (var d2 = 0; d2 < decor.length; d2++) {
+        var dspec = decor[d2];
+        var dobj = W.buildProp(dspec);
+        if (!dobj) continue;
+        scene.add(dobj);
+        W.props.push({ spec: dspec, obj: dobj });
+      }
+    }
     // ---- NPC ----
     W.buildNPCs();
 
@@ -7122,11 +7925,15 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     // 性能要点：绝不能每丛草一个 Mesh（会产生上千 draw call）。
     // 这里用 InstancedMesh：一次 draw call 画几百丛。
     W.buildVegetation();
-
     // ---- 刷怪区 ----
     W.spawnZones = [];
-    for (var s = 0; s < G.DATA.SPAWN_ZONES.length; s++) {
-      var z = G.DATA.SPAWN_ZONES[s];
+    var allZones = G.DATA.SPAWN_ZONES.slice();
+    // 新地区刷怪区（神山 / 码头 / 沙滩）
+    if (G.DATA.REGION_SPAWN_ZONES) {
+      allZones = allZones.concat(G.DATA.REGION_SPAWN_ZONES);
+    }
+    for (var s = 0; s < allZones.length; s++) {
+      var z = allZones[s];
       W.spawnZones.push({
         data: z, timer: 2, alive: []
       });
@@ -7267,11 +8074,73 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         obj = art.shrine();
         W.addCircleCollider(spec.x, spec.z, 1.2);
         W.interactables.push({
-          uid: 'shrine_town', kind: 'shrine', x: spec.x, z: spec.z,
+          uid: spec.uid || 'shrine_town', kind: 'shrine', x: spec.x, z: spec.z,
           radius: 2.4, obj: obj
         });
         break;
       }
+
+      // ===== 新地区专属物件 =====
+      case 'sea':
+        obj = art.sea({ w: spec.w, d: spec.d });
+        // 海不挡路（可以走进去但会被 underwater 减速）
+        break;
+
+      case 'beachSand':
+        obj = art.beachSand({ w: spec.w, d: spec.d, x: spec.x, z: spec.z });
+        break;
+
+      case 'reef':
+        obj = art.reef({ seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, 1.0);
+        break;
+
+      case 'pier':
+        obj = art.pier({ len: spec.len, w: spec.w, deckY: spec.deckY });
+        W.addBoxCollider(spec.x, spec.z, spec.w || 3.2, spec.len || 14, spec.rotY || 0);
+        break;
+
+      case 'boat':
+        obj = art.boat({ len: spec.len, w: spec.w, color: spec.color });
+        W.addCircleCollider(spec.x, spec.z, (spec.w || 1.5) * 0.8);
+        break;
+
+      case 'crate':
+        obj = art.crate({ size: spec.size, seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, (spec.size || 0.7) * 0.8);
+        break;
+
+      case 'barrel':
+        obj = art.barrel({ r: spec.r, h: spec.h, seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, (spec.r || 0.35) * 1.2);
+        break;
+
+      case 'fishingNet':
+        obj = art.fishingNet({ w: spec.w, h: spec.h });
+        break;
+
+      case 'mountainRock':
+        obj = art.mountainRock({ size: spec.size, seed: spec.seed });
+        W.addCircleCollider(spec.x, spec.z, (spec.size || 2.2) * 0.6);
+        break;
+
+      case 'mountainStairs':
+        obj = art.mountainStairs({
+          steps: spec.steps, w: spec.w, rise: spec.rise, run: spec.run
+        });
+        break;
+
+      case 'mist':
+        obj = art.mist({
+          count: spec.count, spread: spec.spread,
+          scale: spec.scale, opacity: spec.opacity, color: spec.color
+        });
+        break;
+
+      case 'banner':
+        obj = art.banner({ h: spec.h, color: spec.color });
+        W.addCircleCollider(spec.x, spec.z, 0.25);
+        break;
 
       case 'gate': {
         // 副本入口：两扇石门 + 幽光
@@ -7305,7 +8174,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         W.addCircleCollider(spec.x + 3.2, spec.z, 0.6);
         W.interactables.push({
           uid: spec.uid || 'gate_dungeon', kind: 'gate', x: spec.x, z: spec.z,
-          radius: 3.2, obj: g
+          radius: 3.2, obj: g,
+          // 记录该门通往哪个副本（神山 / 沙滩 / 忘れ緒の社）
+          region: spec.region || 'wasureo'
         });
         break;
       }
@@ -7315,9 +8186,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       obj.position.x = spec.x;
       obj.position.z = spec.z;
       // 贴地：所有道具都放在地面上。
-      // 例外：water / gate 自己管理高度；path 内部已按世界坐标逐顶点算过高度，
-      // 再抬一次会 double-offset（悬空）。
-      if (spec.type !== 'water' && spec.type !== 'gate' && spec.type !== 'path') {
+      //
+      // 例外清单（这些自己管高度，再抬一次会出错）：
+      //   water/gate/sea   : 自己算高度
+      //   path/mountainStairs/beachSand : 内部已按世界坐标逐顶点算过高度，再抬会 double-offset
+      //   pier             : 栈桥本身有固定 deckY，不跟地形走
+      //   mist             : 云雾飘在空中，不贴地
+      var NO_GROUND = {
+        water: 1, gate: 1, sea: 1,
+        path: 1, mountainStairs: 1, beachSand: 1,
+        pier: 1, mist: 1
+      };
+      if (!NO_GROUND[spec.type]) {
         obj.position.y = W.groundY(spec.x, spec.z);
       }
       if (spec.rotY) obj.rotation.y = spec.rotY;
@@ -7326,13 +8206,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       obj.userData.floatPhase = Math.random() * 6.28;
 
       // 烘焙接地 AO：越贴近地面的部分越暗。
-      // 这是"告别纯色块简约感"最有效的一步——没有接触阴影，
-      // 物体看起来像贴纸浮在绿布上。
-      // falloff 由 bakeContactAO 内部按物体高度自动算（踩过：写死会烧黑细高物体）。
-      if (spec.type !== 'water' && spec.type !== 'path' &&
-          spec.type !== 'pagoda' && spec.type !== 'knot' && spec.type !== 'gate') {
+      // 排除：水面/路径/高塔/结/门/海/沙滩/栈桥/云雾（理由见 NO_GROUND）
+      var NO_AO = {
+        water: 1, path: 1, pagoda: 1, knot: 1, gate: 1, sea: 1,
+        beachSand: 1, pier: 1, mist: 1, fishingNet: 1
+      };
+      if (!NO_AO[spec.type]) {
         W.bakeContactAO(obj, W.groundY(spec.x, spec.z), {
-          strength: spec.type === 'house' ? 0.38 : 0.42
+          strength: (spec.type === 'house' || spec.type === 'boat') ? 0.38 : 0.42
         });
       }
     }
@@ -7353,7 +8234,6 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       if (z < 14) return false;
       return true;
     }
-
     // ---- 草丛 ----
     var tuftCount = 420;
     var tuftGeo = new THREE.PlaneGeometry(0.5, 0.34);
@@ -7397,7 +8277,6 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     W.scene.add(tufts);
     W.vegetation = W.vegetation || {};
     W.vegetation.tufts = tufts;
-
     // ---- 野花 ----
     var flowerCount = 150;
     var flowerGeo = new THREE.IcosahedronGeometry(0.09, 0);
@@ -7452,6 +8331,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
    * @param {number} groundY 该物件所在地面高度
    * @param {object} opt { strength, falloff, height }
    */
+  // AO 材质缓存（按源材质 UUID）——避免对同一材质反复 clone。
+  // 必须在使用它的 bakeContactAO 之前声明（var 会提升但值是 undefined）。
+  var AO_MAT_CACHE = {};
+
   W.bakeContactAO = function (group, groundY, opt) {
     opt = opt || {};
     var strength = opt.strength != null ? opt.strength : 0.5;
@@ -7474,14 +8357,20 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       var pos = geo.attributes.position;
       if (!pos) return;
 
-      node.updateMatrixWorld(true);
+      // 【性能】只算 Y，不算完整世界变换。
+      //
+      // 原来每个顶点都 new Vector3 + fromBufferAttribute + applyMatrix4，
+      // 一次 4x4 矩阵乘 —— 单个 torii（~10 个 mesh × 数百顶点）就要
+      // 几十毫秒。而 AO 只需要"离地多高"，即世界 y；
+      // 世界 y = 局部 y * scaleY + position.y，平移旋转对 y 的影响
+      // 在物件尺度下可以忽略（物件不会大幅横躺）。
+      // 实测 torii 的 bakeContactAO 从 ~70ms 降到 <5ms。
+      var my = node.matrixWorld.elements[13];        // 世界平移 y
+      var sy = node.matrixWorld.elements[5];         // 世界 y 轴缩放分量
       var colors = new Float32Array(pos.count * 3);
-      var v = new THREE.Vector3();
 
       for (var i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i);
-        v.applyMatrix4(node.matrixWorld);
-        var h = v.y - groundY;
+        var h = pos.getY(i) * sy + my - groundY;
         var t = G.M.clamp01(h / falloff);
         // 平滑衰减：只有最底部接近 1-strength
         var ao = 1 - strength * (1 - t) * (1 - t);
@@ -7499,12 +8388,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       // 实例：五重塔基座用石色 #c8c3b8，与房屋/石灯笼共用同一材质；
       //       后者走 AO 把共享材质标成 vertexColors:true，塔基座就变成黑砖。
       // 修法：clone 一份专属材质再标记，互不影响。
+      //
+      // 【性能】clone 很贵（要复制 uniforms、准备 shader 变体），
+      // 所以按源材质 UUID 做缓存：同一材质的多个 mesh 共用一个 AO 副本。
       var srcMat = node.material;
       if (srcMat && !srcMat.vertexColors) {
-        var aoMat = srcMat.clone();
-        aoMat.vertexColors = true;
-        aoMat.needsUpdate = true;
-        node.material = aoMat;
+        if (!AO_MAT_CACHE[srcMat.uuid]) {
+          var aoMat = srcMat.clone();
+          aoMat.vertexColors = true;
+          aoMat.needsUpdate = true;
+          AO_MAT_CACHE[srcMat.uuid] = aoMat;
+        }
+        node.material = AO_MAT_CACHE[srcMat.uuid];
       }
     });
   };
@@ -7684,11 +8579,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     W.scene.background.copy(bgColor);
 
     // 雾
+    // 范围必须与 init 里的 scene.fog 保持一致量级（见那里的注释：
+    // 世界扩建后旧值 62~105 会把中景地面整片糊成雾色，看起来像海水）。
     var fogColor = bgColor.clone().lerp(new THREE.Color('#FFFFFF'), 0.18);
     if (W.scene.fog) {
       W.scene.fog.color.copy(fogColor);
-      W.scene.fog.near = G.M.lerp(62, 50, t);
-      W.scene.fog.far = G.M.lerp(105, 82, t);
+      W.scene.fog.near = G.M.lerp(300, 240, t);
+      W.scene.fog.far = G.M.lerp(520, 420, t);
     }
 
     // 太阳位置

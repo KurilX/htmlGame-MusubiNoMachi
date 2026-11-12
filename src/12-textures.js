@@ -398,7 +398,15 @@
   // =====================================================================
   var cache = {};
   G.texCached = function (kind, colorHex, opt) {
-    var key = kind + '|' + colorHex + '|' + JSON.stringify(opt || {});
+    // 【关键：缓存 key 不要带 seed】
+    //
+    // 原来 key 里拼了 JSON.stringify(opt)，而 opt 常见是 { seed: 11 }。
+    // 每个不同的 seed 都会重新跑一遍 canvas 绘制，生成一张新的 GPU 纹理。
+    // 实测后果：
+    //   - torii 单次构建 82ms（反复生成 wood 贴图）
+    //   - 纹理数从 72 涨到数百，显存与批次都受影响
+    // seed 只影响纹理内部的随机细节，同类贴图复用同一张完全够看。
+    var key = kind + '|' + colorHex;
     if (!cache[key]) {
       var fn = T[kind];
       if (!fn) { console.warn('[tex] unknown kind', kind); return null; }

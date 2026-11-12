@@ -398,6 +398,9 @@
    * @param {THREE.Group} group
    * @returns {number} 合并后的 mesh 数（-1 表示未合并）
    */
+  // 合并后的材质缓存（按源材质 UUID），避免反复 clone 触发 shader 重建
+  var MERGED_MAT_CACHE = {};
+
   W.flattenGroupByMaterial = function (group) {
     group.updateMatrixWorld(true);
 
@@ -430,12 +433,19 @@
       // **没有 color 属性的其它 mesh**（如塔基座）就被 vertexColors: true
       // 渲染成纯黑了。五重塔基座变黑砖正是这个原因。
       //
-      // 用 clone 后：合并体有自己的材质实例，不影响任何其它 mesh。
-      var mergedMat = bucket.mat.clone();
-      delete mergedMat.userData.coloredShade;   // clone 会带过来，清掉避免重复编译
-      mergedMat.needsUpdate = true;
+      // 【性能：材质副本必须缓存，不能每次 clone】
+      // clone + needsUpdate=true 会让 three.js 重建 WebGLProgram
+      // （profiler 里 Ea.getUniforms 命中 12498 次，占启动时间 60%+）。
+      // 同一源材质的合并体外观完全一致，共用一个副本即可。
+      var mkey = bucket.mat.uuid;
+      if (!MERGED_MAT_CACHE[mkey]) {
+        var mergedMat = bucket.mat.clone();
+        delete mergedMat.userData.coloredShade;
+        mergedMat.needsUpdate = true;
+        MERGED_MAT_CACHE[mkey] = mergedMat;
+      }
 
-      var m = new THREE.Mesh(geo, mergedMat);
+      var m = new THREE.Mesh(geo, MERGED_MAT_CACHE[mkey]);
       m.castShadow = true;
       m.receiveShadow = true;
       group.add(m);
