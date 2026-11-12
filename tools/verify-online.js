@@ -1,9 +1,17 @@
 // tools/verify-online.js — 验证线上 (GitHub Pages) 版本真实可玩
 //
 // 与 verify-build.js 的区别：那个测本地 file://，这个测 https:// 线上地址。
-// 线上和本地有两个关键差异必须验证：
+// 线上和本地有几个关键差异必须验证：
 //   1) https 下 localStorage / AudioContext 的可用性与 file:// 不同
-//   2) 必须确认加载的是"线上那份"，而不是浏览器缓存或本地文件
+//   2) 资源可能 404（虽然单文件理论上不该有外部请求）
+//   3) 必须确认加载的是"线上那份"，而不是浏览器缓存
+//
+// 【踩过的坑：不要用 res.Content.Length 比对文件大小】
+// 曾经用 PowerShell 的 Invoke-WebRequest 取线上 game.html，
+// 读到 958959 字节，而本地是 984554，差 25KB，误判成"线上文件被改过"。
+// 实际原因：Invoke-WebRequest 把 HTML 当字符串解码（多字节 UTF-8 + 换行规范化），
+// .Content.Length 是**字符数不是字节数**。
+// 正确做法：读 Content-Length 响应头，或用 curl --compressed 落盘后 stat 字节数。
 const path = require('path');
 const fs = require('fs');
 const { launchOwnChrome, sleep } = require('./cdp');
@@ -20,6 +28,37 @@ async function main() {
 
   console.log('=== 线上版本验证 ===');
   console.log('地址: ' + URL + '\n');
+
+  // ---- 0. 线上文件完整性（HTTP 层，先于浏览器） ----
+  //
+  // 用 HEAD 拿 Content-Length 与本地 game.html 比对。
+  // 注意：必须用 Content-Length 响应头，不能用 Invoke-WebRequest 的
+  // .Content.Length（那是解码后的字符数，会差几万）。
+  try {
+    const localSize = fs.statSync(path.join(ROOT, 'game.html')).size;
+    const http = require('http');
+    const https = require('https');
+    // 注意：用 require('url').URL，不要直接用全局 URL
+    // （踩过：URL is not a constructor，因为全局 URL 在某些上下文被覆盖）
+    const { URL: NodeURL } = require('url');
+    const urlObj = new NodeURL(URL);
+    const client = urlObj.protocol === 'https:' ? https : http;
+    const remoteSize = await new Promise((resolve, reject) => {
+      const req = client.request({
+        host: urlObj.host, path: urlObj.pathname, method: 'HEAD'
+      }, res => {
+        res.resume();
+        resolve(parseInt(res.headers['content-length'], 10));
+      });
+      req.on('error', reject);
+      req.setTimeout(20000, () => req.destroy(new Error('timeout')));
+      req.end();
+    });
+    check('线上文件的字节数与本地一致', remoteSize === localSize,
+      'remote=' + remoteSize + ' local=' + localSize);
+  } catch (e) {
+    check('线上文件的字节数与本地一致', false, 'HEAD 失败: ' + e.message);
+  }
 
   const b = await launchOwnChrome({ width: 1280, height: 720 });
   const cdp = b.cdp;
