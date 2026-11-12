@@ -114,8 +114,7 @@
     W.fill = fill;
 
     // ---- 地面 ----
-    // 2026-11 改造：原来是两块纯平 BoxGeometry，野外看起来空旷。
-    // 现在按 G.terrain.height(x,z) 生成分段网格，支持坡坎/溪谷/盆地。
+    // 按 G.terrain.height(x,z) 生成分段网格，支持坡坎/溪谷/盆地/山体/海岸。
     // 城镇区域高度恒为 0（terrain 内部用 townWeight 强制），所以城镇仍是平的。
     W.ground = [];
 
@@ -174,27 +173,59 @@
       return m;
     }
 
-    // 城镇地面（土黄，平坦）
+    // ---- 地面 ----
+    // 2026-11 扩建：世界从 68x82 扩到 240x300。
+    // 单张大网格会有 4 万+ 顶点，而且无法视锥剔除（永远整张渲染）。
+    //
+    // 改为**分块生成**：把世界切成 TILE 大小的方块，每块独立 mesh。
+    // 好处：three.js 能对视锥外的块做剔除；顶点数分散也更利于驱动缓存。
+    // 块边界处顶点法线不连续的问题用 computeVertexNormals 逐块计算，
+    // 因为地形函数是连续的，高度不会在块边界断裂，只有法线有极轻微差异，
+    // 在 3 阶色阶下看不出来。
+    W.ground = [];
+
+    var TILE = 60;   // 每块 60x60 世界单位
+    var WORLD = G.DATA.WORLD;
+    var TOWN = G.DATA.TOWN;
+
+    // 城镇单独一块（土色，平坦），范围略大于 TOWN 以便衔接
     var townMesh = buildGroundMesh({
-      minX: -20, maxX: 20, minZ: -14, maxZ: 14,
-      segX: 20, segZ: 14,
-      color: '#C9A87C', repeat: 8, seed: 3
+      minX: TOWN.minX - 6, maxX: TOWN.maxX + 6,
+      minZ: TOWN.minZ - 6, maxZ: TOWN.maxZ + 6,
+      segX: 40, segZ: 32,
+      color: '#C9A87C', repeat: 10, seed: 3
     });
     scene.add(townMesh);
     W.ground.push(townMesh);
 
-    // 野外地面（草地，有起伏）
-    // 范围必须比 WORLD 边界大很多：等距正交相机在 45° 下看到的范围
-    // 远超逻辑边界（视口高 24、宽约 43，加上俯角投影拉长），
-    // 网格小了就会在画面边缘露出天空（踩过）。
-    // 这里给到 ±90 / z∈[-50,130]，远超玩家可达范围。
-    var fieldMesh = buildGroundMesh({
-      minX: -90, maxX: 90, minZ: -12, maxZ: 130,
-      segX: 120, segZ: 96,
-      color: G.PALETTE.grass, repeat: 26, seed: 9
-    });
-    scene.add(fieldMesh);
-    W.ground.push(fieldMesh);
+    // 野外：按块铺满整个世界范围（含边缘余量，避免看到天空）
+    var PAD = 40;   // 世界边界外再铺一圈，防止相机看到边缘
+    var x0 = WORLD.minX - PAD, x1 = WORLD.maxX + PAD;
+    var z0 = WORLD.minZ - PAD, z1 = WORLD.maxZ + PAD;
+
+    var tileCount = 0;
+    for (var tx = x0; tx < x1; tx += TILE) {
+      for (var tz = z0; tz < z1; tz += TILE) {
+        var mx0 = tx, mx1 = Math.min(tx + TILE, x1);
+        var mz0 = tz, mz1 = Math.min(tz + TILE, z1);
+        // 跳过完全落在城镇范围内的块（已被 townMesh 覆盖，避免 z-fighting）
+        if (mx1 <= TOWN.maxX + 6 && mx0 >= TOWN.minX - 6 &&
+            mz1 <= TOWN.maxZ + 6 && mz0 >= TOWN.minZ - 6) continue;
+
+        // 每块 24x24 段，即 2.5 单位一格，足够表现地形起伏
+        var seg = 24;
+        var mesh = buildGroundMesh({
+          minX: mx0, maxX: mx1, minZ: mz0, maxZ: mz1,
+          segX: seg, segZ: seg,
+          color: G.PALETTE.grass,
+          repeat: 8, seed: 9 + tileCount
+        });
+        scene.add(mesh);
+        W.ground.push(mesh);
+        tileCount++;
+      }
+    }
+    W.groundTileCount = tileCount;
 
     // 世界边界（不可见的围栏）——用碰撞体实现，不画几何
 

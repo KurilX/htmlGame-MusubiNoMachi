@@ -32,10 +32,13 @@
   var REGIONS = {
     town:     { cx: 0,    cz: 0,    rx: 34,  rz: 26 },
     field:    { cx: 0,    cz: 40,   rx: 48,  rz: 40 },
-    mountain: { cx: 0,    cz: 150,  rx: 60,  rz: 56 },
-    // 海岸区域要覆盖到"海里"，否则 x>150 之后权重衰减到 0，
-    // baseHeight 的 north 项把海面抬到 26 单位（实测）。
-    // 所以 rx 必须足够大，让整片海都在海岸剖面控制下。
+    // 山的中心要在峰顶，rz 要够大让山脚平缓延伸到 z=90 左右。
+    // 【踩过的坑】原来 cz=150, rz=56，山体在 z=206 处才归零，
+    // 但玩家走到 z=170 时 hillTop 已经掉了 40%（从 41 降到 24），
+    // 看起来像"爬过山顶又下山"，实际是椭圆边界截断。
+    // 现在 cz=140, rz=72：峰顶在 z=140，山脚延伸到 z=212。
+    mountain: { cx: 0,    cz: 140,  rx: 66,  rz: 72 },
+    // 海岸区域要覆盖到"海里"
     harbor:   { cx: 120,  cz: 62,   rx: 42,  rz: 34 },
     beach:    { cx: 150,  cz: 130,  rx: 78,  rz: 66 }
   };
@@ -179,9 +182,18 @@
     h += mountainAdd(x, z);
 
     // 海岸：用"剖面替换"而不是减法（详见 coastProfile 的注释）
+    //
+    // 【踩过的坑：海滩路上有 10 单位断层】
+    // 原来用 smoothstep(w * 1.6) 做插值权重。w=0.4 时权重只有 0.36，
+    // 于是内陆高值（10.9）与海岸剖面（0.9）之间还有一个"半高"的中间态，
+    // 但相邻采样点 w 变化快，导致 20 单位距离内高度从 10.9 掉到 0.94。
+    // 修法：把 w 先做一次 smoothstep 拉伸，让"快速衰减带"变宽，
+    // 同时用 w 本身的平方根让小权重也产生足够的替换力。
     var coast = coastProfile(x, z);
     if (coast.w > 0 && coast.h !== null) {
-      h = G.M.lerp(h, coast.h, G.M.smoothstep(coast.w * 1.6));
+      var cw = Math.sqrt(G.M.clamp01(coast.w));          // 小权重也能拉动
+      cw = G.M.smoothstep(G.M.clamp01(cw * 1.3));        // 再平滑一次
+      h = G.M.lerp(h, coast.h, cw);
     }
 
     // 溪谷：局部下切
