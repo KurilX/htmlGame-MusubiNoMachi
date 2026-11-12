@@ -18,16 +18,24 @@ const path = require('path');
 const { launchOwnChrome, sleep } = require('./cdp');
 const ROOT = path.resolve(__dirname, '..');
 
+// 目标地址：默认本地 dev.html（开发时用），也可传参测线上：
+//   node tools/verify-aim.js https://kurilx.github.io/htmlGame-MusubiNoMachi/game.html
+//
+// 【踩过的坑】之前这里把 URL 写死成 dev.html，传参被静默忽略 ——
+// 我一度以为"线上瞄准已验证"，实际测的还是本地文件。
+// 现在显式支持 argv[2]，并把真实加载的地址打印出来。
+const TARGET_URL = process.argv[2] ||
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now());
+
 (async () => {
+  console.log('目标地址: ' + TARGET_URL + '\n');
   const b = await launchOwnChrome({ width: 1280, height: 720 });
   const cdp = b.cdp;
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
   try { await cdp.send('Network.enable'); await cdp.send('Network.setCacheDisabled', { cacheDisabled: true }); } catch (e) {}
-  await cdp.send('Page.navigate', {
-    url: 'file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now()
-  });
-  await sleep(4500);
+  await cdp.send('Page.navigate', { url: TARGET_URL });
+  await sleep(5000);
 
   const spots = [
     { name: '城镇', x: 0, z: 0 },
