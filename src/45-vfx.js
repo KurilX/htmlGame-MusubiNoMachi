@@ -1,6 +1,15 @@
 /* 45-vfx.js — 打击特效与屏幕反馈
  *
  * 全部用程序化几何 + 材质动画实现，无贴图资源。
+ *
+ * 【2026-11 修复：出村后特效"范围异常/被吞"】
+ * 根因：所有特效的 y 都是写死的常量（0.30 / 0.35 / 0.40），
+ * 而野外地面高度从 1.04 一路升到 8.96。特效被埋在地下最多 8.56 单位，
+ * 玩家只能看到它从土里露出来的一小条，看起来像"范围不对"或"没打出来"。
+ * 城镇地面恒为 0，所以村里完全正常 —— 和你观察到的现象一致。
+ *
+ * 修法：把"贴地"变成特效的默认行为，用 G.world.groundY(x,z) + 相对高度。
+ * 同时新增 vfxY() 供所有特效统一取值，避免以后再加特效时又写死数字。
  */
 (function (G) {
   'use strict';
@@ -11,8 +20,20 @@
   var active = [];       // 活动特效
   var damageNumbers = []; // DOM 伤害数字
 
+  /**
+   * 特效的统一高度：地面高度 + 相对抬升。
+   * 所有特效都必须走这里，不要写死数字（踩过：写死 0.35 导致野外全埋地下）。
+   */
+  V.atGround = function (x, z, lift) {
+    return G.world.groundY(x, z) + (lift || 0);
+  };
+
+  /** 调试用：当前活动特效数量 */
+  V.activeCount = function () { return active.length; };
+
   V.clear = function () {
     for (var i = 0; i < active.length; i++) {
+      // 延迟项没有 obj，只有创建回调；直接丢弃即可
       if (active[i].obj && active[i].obj.parent) {
         active[i].obj.parent.remove(active[i].obj);
       }
@@ -28,6 +49,20 @@
   function add(obj, life, update) {
     G.world.scene.add(obj);
     active.push({ obj: obj, life: life, maxLife: life, update: update });
+  }
+
+  /**
+   * 延迟创建特效 —— 替代 setTimeout。
+   *
+   * 【为什么要改】setTimeout 不受帧循环管辖：
+   *   - hitstop 期间它照常触发（停顿感被破坏）
+   *   - 切后台/暂停时它仍在跑
+   *   - 场景重建后它可能往旧 scene 里加对象
+   * 改为挂进 active 队列，由 update(dt) 驱动。
+   */
+  function delayed(sec, fn) {
+    var pending = { obj: null, life: sec, maxLife: sec, delay: fn, isDelay: true };
+    active.push(pending);
   }
 
   // =====================================================================
@@ -46,7 +81,7 @@
     });
     var m = new THREE.Mesh(geo, mat);
     m.rotation.x = -Math.PI / 2;
-    m.position.set(x, 0.35, z);
+    m.position.set(x, V.atGround(x, z, 0.35), z);
     add(m, 0.16, function (t, self) {
       self.material.opacity = 0.72 * (1 - t) * (1 - t);
       self.scale.setScalar(1 + t * 0.15);
@@ -57,29 +92,33 @@
   // 月影斩（技能1）：更大更亮的一道
   // =====================================================================
   V.moonSlash = function (x, z, angle, radius) {
+    // 两层错开 45ms 出现。用帧循环延迟而不是 setTimeout：
+    // setTimeout 不受 hitstop 管辖，停顿期间照常触发，破坏打击感；
+    // 而且在低帧率下会和渲染节拍错开，看起来像"两刀只出现一刀"。
     for (var k = 0; k < 2; k++) {
-      (function (delay) {
-        setTimeout(function () {
+      (function (layerIndex, delaySec) {
+        delayed(delaySec, function () {
           if (!G.world.scene) return;
           var geo = new THREE.RingGeometry(radius * 0.3, radius * 1.1, 20, 1,
             angle - Math.PI * 0.36 - Math.PI / 2, Math.PI * 0.72);
           var mat = new THREE.MeshBasicMaterial({
-            color: new THREE.Color(k === 0 ? '#DCEFFF' : '#B8DCE8'),
+            color: new THREE.Color(layerIndex === 0 ? '#DCEFFF' : '#B8DCE8'),
             transparent: true,
-            opacity: 0.85,
+            // 同 ringSlash：0.85 在亮背景上过曝成白块，降到 0.5
+            opacity: 0.5,
             side: THREE.DoubleSide,
             depthWrite: false,
             blending: THREE.AdditiveBlending
           });
           var m = new THREE.Mesh(geo, mat);
           m.rotation.x = -Math.PI / 2;
-          m.position.set(x, 0.4 + k * 0.12, z);
+          m.position.set(x, V.atGround(x, z, 0.4 + layerIndex * 0.12), z);
           add(m, 0.28, function (t, self) {
-            self.material.opacity = 0.85 * (1 - t);
+            self.material.opacity = 0.5 * (1 - t) * (1 - t);
             self.scale.setScalar(1 + t * 0.25);
           });
-        }, delay);
-      })(k * 45);
+        });
+      })(k, k * 0.045);
     }
     // 中心爆点
     V.impactRing(x, z, radius * 0.8, '#DCEFFF');
@@ -93,16 +132,19 @@
     var mat = new THREE.MeshBasicMaterial({
       color: new THREE.Color('#FFE9A8'),
       transparent: true,
-      opacity: 0.9,
+      // 0.9 在明亮草地上配合 AdditiveBlending 会过曝成纯白块，
+      // 把地面和角色全糊住（截图确认）。0.55 能看清攻击判定圈又不挡视线。
+      opacity: 0.55,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
     var m = new THREE.Mesh(geo, mat);
     m.rotation.x = -Math.PI / 2;
-    m.position.set(x, 0.3, z);
+    m.position.set(x, V.atGround(x, z, 0.3), z);
     add(m, 0.32, function (t, self) {
-      self.material.opacity = 0.9 * (1 - t);
+      // 二次曲线淡出：前段保持亮度，后段快速消失，比线性更有"打击"感
+      self.material.opacity = 0.55 * (1 - t) * (1 - t);
       var s = 1 + t * 0.35;
       self.scale.set(s, 1, s);
     });
@@ -121,7 +163,7 @@
     });
     var m = new THREE.Mesh(geo, mat);
     m.rotation.x = -Math.PI / 2;
-    m.position.set(x, 0.25, z);
+    m.position.set(x, V.atGround(x, z, 0.25), z);
     add(m, 0.3, function (t, self) {
       self.material.opacity = 0.8 * (1 - t);
       var s = 1 + t * 1.2;
@@ -166,7 +208,7 @@
     });
     var w = 2.05 * (atlas.cw / atlas.ch);
     var m = new THREE.Mesh(new THREE.PlaneGeometry(w, 2.05), mat);
-    m.position.set(x, 1.02, z);
+    m.position.set(x, V.atGround(x, z, 1.02), z);
     // 关键：setChibiFrame 从 mesh.userData.atlas 读 w/h 信息，
     // 残影是临时 mesh，必须挂上去（踩过：不挂 -> atlas undefined -> 报错）
     m.userData.atlas = atlas;
@@ -193,7 +235,7 @@
     });
     var m = new THREE.Mesh(geo, mat);
     m.rotation.x = -Math.PI / 2;
-    m.position.set(x, 0.4, z);
+    m.position.set(x, V.atGround(x, z, 0.4), z);
     G.world.scene.add(m);
     // 持续到 parry 结束由 entity 管理，这里做视觉脉冲
     var life = 1.2;
@@ -218,7 +260,7 @@
       depthWrite: false, blending: THREE.AdditiveBlending
     });
     var m = new THREE.Mesh(geo, mat);
-    m.position.set(x, 1.2, z);
+    m.position.set(x, V.atGround(x, z, 1.2), z);
     add(m, 0.25, function (t, self) {
       self.material.opacity = 0.9 * (1 - t);
       self.scale.setScalar(1 + t * 2.5);
@@ -250,8 +292,8 @@
   // =====================================================================
   V.levelUp = function (x, z) {
     for (var i = 0; i < 3; i++) {
-      (function (k) {
-        setTimeout(function () {
+      (function (k, delaySec) {
+        delayed(delaySec, function () {
           if (!G.world.scene) return;
           var geo = new THREE.RingGeometry(0.6, 0.9, 20);
           var mat = new THREE.MeshBasicMaterial({
@@ -262,13 +304,13 @@
           });
           var m = new THREE.Mesh(geo, mat);
           m.rotation.x = -Math.PI / 2;
-          m.position.set(x, 0.25 + k * 0.5, z);
+          m.position.set(x, V.atGround(x, z, 0.25 + k * 0.5), z);
           add(m, 0.6, function (t, self) {
             self.material.opacity = 0.85 * (1 - t);
             self.scale.setScalar(1 + t * 2.4);
           });
-        }, k * 100);
-      })(i);
+        });
+      })(i, i * 0.1);
     }
     G.ui.toast('✦ 等级提升 ✦', 1800);
   };
@@ -282,7 +324,7 @@
         transparent: true, opacity: 0.95, depthWrite: false
       });
       var m = new THREE.Mesh(geo, mat);
-      m.position.set(x, 1.0, z);
+      m.position.set(x, V.atGround(x, z, 1.0), z);
       var a = (i / n) * Math.PI * 2;
       var sp = 2.2 + Math.random() * 1.6;
       add(m, 0.5, (function (ang, s) {
@@ -304,13 +346,24 @@
     // 3D 特效
     for (var i = active.length - 1; i >= 0; i--) {
       var a = active[i];
+
+      // 延迟项：倒计时结束后执行一次创建回调，然后出队
+      if (a.isDelay) {
+        a.life -= dt;
+        if (a.life <= 0) {
+          active.splice(i, 1);
+          try { a.delay(); } catch (e) { console.warn('[vfx] delayed callback failed', e); }
+        }
+        continue;
+      }
+
       a.life -= dt;
       var t = 1 - Math.max(0, a.life) / a.maxLife;
       if (a.update) a.update(t, a.obj);
       if (a.life <= 0) {
-        if (a.obj.parent) a.obj.parent.remove(a.obj);
-        if (a.obj.geometry) a.obj.geometry.dispose();
-        if (a.obj.material) a.obj.material.dispose();
+        if (a.obj && a.obj.parent) a.obj.parent.remove(a.obj);
+        if (a.obj && a.obj.geometry) a.obj.geometry.dispose();
+        if (a.obj && a.obj.material) a.obj.material.dispose();
         active.splice(i, 1);
       }
     }
