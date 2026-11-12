@@ -24,9 +24,8 @@ COMMIT_MSG.txt
 # 本地 Chrome profile（验收脚本会生成在 %TEMP%，但防止误提交）
 .dsh-chrome-*/
 
-# git commit -F �õ���ʱ��Ϣ�ļ�
+# git commit -F 用的临时提交信息文件
 MSG.txt
 _commit_msg.txt
-
-# ��ʱ�ύ��Ϣ�ļ�
 _m.txt
+_tmp.txt

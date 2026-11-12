@@ -93,7 +93,29 @@ async function main() {
   } catch (e) {}
 
   await cdp.send('Page.navigate', { url: URL });
-  await sleep(6000);
+
+  // 【改为等"真的启动完成"，不再用固定 sleep】
+  //
+  // 原来固定 sleep(6000)。世界扩建后启动变慢（本地 3~7.5s，
+  // 线上还要加下载 1MB 文件的时间），6 秒会踩边界导致偶发超时。
+  // 用轮询等待 G.world.props 就绪，最多 25 秒；超时才判失败。
+  let booted = false;
+  const bootStart = Date.now();
+  for (let i = 0; i < 50; i++) {
+    await sleep(500);
+    try {
+      const ok = await cdp.eval(
+        `(typeof G !== 'undefined' && G.world && G.world.props && G.world.props.length > 0) ? G.world.props.length : 0`
+      );
+      if (ok > 0) { booted = true; break; }
+    } catch (e) { /* 页面还没加载完，继续等 */ }
+  }
+  const bootMs = Date.now() - bootStart;
+  if (!booted) {
+    console.log('  !! 25 秒内未完成启动（' + bootMs + 'ms）');
+  } else if (bootMs > 8000) {
+    console.log('  (提示) 启动耗时 ' + (bootMs / 1000).toFixed(1) + 's，偏慢');
+  }
 
   // ---- 1. 页面来源确认（必须真的是线上） ----
   const origin = await cdp.eval(`({
