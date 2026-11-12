@@ -6,7 +6,13 @@
 
 ---
 
-## 直接玩
+## 在线玩
+
+**https://kurilx.github.io/htmlGame-MusubiNoMachi/**
+
+点「开始游戏」即可。无需安装、无需登录。直接进游戏：[game.html](https://kurilx.github.io/htmlGame-MusubiNoMachi/game.html)
+
+## 离线玩
 
 下载 [`game.html`](game.html)，双击用浏览器打开。没有安装、没有服务器、没有登录。
 
@@ -100,7 +106,19 @@ node build.mjs
 # 验收（会自己拉起独立 Chrome，动态申请端口）
 node tools/verify-d1.js      # 玩法 20 项
 node tools/verify-build.js   # 单文件 21 项
+node tools/verify-online.js  # 线上版本 18 项
 ```
+
+### 部署
+
+推送到 `main` 即自动部署到 GitHub Pages（`.github/workflows/deploy-pages.yml`）。
+
+CI 分两段：
+
+1. **静态校验** — 检查 `game.html` 是否满足单文件约束（无外部 `<script src>`、无 http 资源引用、无外部样式表、引擎与游戏入口已内联）
+2. **一致性校验** — 重新 `node build.mjs`，若产出与仓库里的 `game.html` 不一致则 warning（说明改了 `src/` 却忘了 rebuild），并**恢复成仓库版本**，保证线上跑的一定是验收过的那个文件
+
+> 为什么 CI 不重新构建后发布：`game.html` 是已经过 21 项实机验收的产物。CI 重新构建会发布"理论上相同但未经验证"的文件。
 
 ### 目录
 
@@ -124,8 +142,9 @@ src/
   data/            纯数据（怪物/物品/技能/地图/对话/任务）
 tools/
   cdp.js           CDP 安全封装（动态端口 + 归属校验）
-  verify-d1.js     玩法验收
-  verify-build.js  单文件验收
+  verify-d1.js     玩法验收（20 项）
+  verify-build.js  单文件验收（21 项）
+  verify-online.js 线上版本验收（18 项）
 docs/
   PLAN.md          设计定稿 + 模块清单 + 数据表结构
   art/             风格参考图
