@@ -27,3 +27,6 @@ COMMIT_MSG.txt
 # git commit -F 用的临时信息文件
 MSG.txt
 _commit_msg.txt
+
+# 临时提交信息文件
+_m.txt
