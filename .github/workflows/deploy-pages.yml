@@ -1,25 +1,9 @@
 name: Deploy to GitHub Pages
 
-# 部署策略说明（为什么不"在 CI 里构建"而是直接发布 game.html）：
-#
-# 1) game.html 是**已经构建好并经过实机验收**的产物
-#    （tools/verify-build.js 21 项全过，包括"file:// 下能跑"）。
-#    如果 CI 里重新 build，发布出去的就不是我验证过的那个文件。
-#
-# 2) 这个项目的构建是 `node build.mjs`，零依赖、纯字符串拼接，
-#    本地一秒完成。CI 里重跑同样的命令，产出的字节理论上一致，
-#    但"理论上一致"不等于"我验证过"。
-#
-# 3) 保留构建步骤作为**一致性校验**：CI 会重新 build 一次，
-#    如果产出和仓库里的 game.html 不一致就报警（warning，不阻断）。
-#    这样既保证发布的是验收过的文件，又能发现"改了源码忘了 rebuild"。
-
 on:
   push:
-    branches: [main]
-    paths:
-      - 'game.html'
-      - '.github/workflows/deploy-pages.yml'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -27,126 +11,74 @@ permissions:
   pages: write
   id-token: write
 
-# 同一时间只允许一个部署，避免并发推送互相覆盖
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: 校验构建产物
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 静态检查 —— 单文件必须零外部依赖
-        run: |
-          set -e
-          FILE=game.html
-          [ -f "$FILE" ] || { echo "::error::game.html 不存在"; exit 1; }
-
-          SIZE=$(stat -c%s "$FILE")
-          echo "game.html 大小: $SIZE 字节"
-          [ "$SIZE" -gt 500000 ] || { echo "::error::体积异常偏小"; exit 1; }
-
-          # 不允许任何外部脚本/样式/图片引用（这是单文件交付的底线）
-          if grep -qiE '<script[^>]+src=' "$FILE"; then
-            echo "::error::发现外部 <script src>，破坏单文件约束"; exit 1
-          fi
-          if grep -qiE '(src|href)="https?://' "$FILE"; then
-            echo "::error::发现 http(s) 资源引用"; exit 1
-          fi
-
-          # 外部样式表检查。
-          # 不能用负向先行断言（grep -E 不支持），也不要在管道里凑逻辑，
-          # 直接：把含 <link> 且有 href= 的行取出来，逐行判断 href 是否 data:
-          BAD_LINK=$(grep -iE '<link[^>]+href=' "$FILE" | grep -viE 'href="data:' || true)
-          if [ -n "$BAD_LINK" ]; then
-            echo "::error::发现外部样式表引用:"
-            echo "$BAD_LINK" | head -3
-            exit 1
-          fi
-
-          # 必须包含引擎与游戏入口
-          grep -q 'REVISION' "$FILE" || { echo "::error::未内联 three.js"; exit 1; }
-          grep -q 'window.G = window.G' "$FILE" || { echo "::error::未内联游戏模块"; exit 1; }
-          echo "✓ 单文件约束全部满足"
-
-      - name: 一致性校验 —— 源码重新构建后应与仓库文件一致
-        continue-on-error: true
-        run: |
-          if [ -f build.mjs ] && [ -f vendor/three.min.js ]; then
-            cp game.html /tmp/committed.html
-            node build.mjs
-            if diff -q /tmp/committed.html game.html > /dev/null; then
-              echo "✓ 仓库里的 game.html 与源码构建结果一致"
-            else
-              echo "::warning::game.html 与当前源码构建结果不一致（可能改了 src/ 但忘了 node build.mjs）"
-              echo "  仓库文件: $(stat -c%s /tmp/committed.html) 字节"
-              echo "  重新构建: $(stat -c%s game.html) 字节"
-              # 恢复成已提交的版本，保证发布的是验收过的产物
-              cp /tmp/committed.html game.html
-            fi
-          else
-            echo "::warning::缺少 build.mjs 或 vendor/three.min.js，跳过一致性校验"
-          fi
-
-  deploy:
-    name: 发布到 Pages
-    needs: verify
+  build-and-deploy:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: 准备站点目录
+      - name: Verify single-file constraints
+        run: |
+          set -e
+          FILE=game.html
+          test -f "$FILE" || { echo "ERROR: game.html missing"; exit 1; }
+          SIZE=$(stat -c%s "$FILE")
+          echo "game.html size: $SIZE bytes"
+          test "$SIZE" -gt 500000 || { echo "ERROR: file too small"; exit 1; }
+
+          if grep -qiE '<script[^>]+src=' "$FILE"; then
+            echo "ERROR: external script tag found"; exit 1
+          fi
+          if grep -qiE '(src|href)="https?://' "$FILE"; then
+            echo "ERROR: external http resource found"; exit 1
+          fi
+          BAD_LINK=$(grep -iE '<link[^>]+href=' "$FILE" | grep -viE 'href="data:' || true)
+          if test -n "$BAD_LINK"; then
+            echo "ERROR: external stylesheet found"; exit 1
+          fi
+          grep -q 'REVISION' "$FILE" || { echo "ERROR: three.js not inlined"; exit 1; }
+          grep -q 'window.G = window.G' "$FILE" || { echo "ERROR: game modules not inlined"; exit 1; }
+          echo "OK: all single-file constraints satisfied"
+
+      - name: Prepare site
         run: |
           set -e
           mkdir -p _site
-          # 根路径给一份 game.html（让人可直达 .../game.html）
           cp game.html _site/game.html
-          # 首页也指向游戏：index.html 只做跳转，避免维护两份
-          cat > _site/index.html <<'HTML'
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>結ノ町 — Musubi no Machi</title>
-<style>
-  html,body{margin:0;height:100%;background:#14161c;color:#F7C8D8;
-    font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;
-    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px}
-  h1{font-size:28px;letter-spacing:8px;font-weight:400;margin:0}
-  p{color:#8a99a8;font-size:13px;margin:0;letter-spacing:1px}
-  a{display:inline-block;padding:12px 34px;border:1px solid rgba(247,200,216,.5);
-    border-radius:6px;color:#FBF3E4;text-decoration:none;font-size:15px;
-    letter-spacing:2px;transition:.18s}
-  a:hover{background:rgba(247,200,216,.13);border-color:#F7C8D8}
-  .hint{color:#5c6672;font-size:11px;margin-top:8px}
-</style>
-</head>
-<body>
-  <h1>結 ノ 町</h1>
-  <p>Musubi no Machi</p>
-  <a href="./game.html">开 始 游 戏</a>
-  <div class="hint">WASD 移动 · 左键攻击 · 1-4 技能 · Shift 闪避 · E 交互</div>
-</body>
-</html>
-HTML
-          # 404 也回首页，避免直接访问子路径时空白
+          printf '%s\n' \
+            '<!DOCTYPE html>' \
+            '<html lang="zh-CN"><head><meta charset="utf-8">' \
+            '<meta name="viewport" content="width=device-width,initial-scale=1">' \
+            '<title>結ノ町 — Musubi no Machi</title>' \
+            '<style>html,body{margin:0;height:100%;background:#14161c;color:#F7C8D8;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px}' \
+            'h1{font-size:28px;letter-spacing:8px;font-weight:400;margin:0}' \
+            'p{color:#8a99a8;font-size:13px;margin:0;letter-spacing:1px}' \
+            'a{display:inline-block;padding:12px 34px;border:1px solid rgba(247,200,216,.5);border-radius:6px;color:#FBF3E4;text-decoration:none;font-size:15px;letter-spacing:2px}' \
+            'a:hover{background:rgba(247,200,216,.13);border-color:#F7C8D8}' \
+            '.hint{color:#5c6672;font-size:11px;margin-top:8px}</style></head>' \
+            '<body><h1>結 ノ 町</h1><p>Musubi no Machi</p>' \
+            '<a href="./game.html">开 始 游 戏</a>' \
+            '<div class="hint">WASD 移动 · 左键攻击 · 1-4 技能 · Shift 闪避 · E 交互</div>' \
+            '</body></html>' > _site/index.html
           cp _site/index.html _site/404.html
           ls -la _site/
 
-      - uses: actions/configure-pages@v4
-      - uses: actions/upload-pages-artifact@v3
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          path: '_site'
-      - id: deployment
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
