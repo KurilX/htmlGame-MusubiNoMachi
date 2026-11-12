@@ -588,9 +588,20 @@
       }
       geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-      if (node.material && !node.material.vertexColors) {
-        node.material.vertexColors = true;
-        node.material.needsUpdate = true;
+      // 【关键】必须给这个 mesh 一个**独立的材质副本**。
+      //
+      // 踩过的坑：material 是全局缓存共享的（art 里的 mat()/texMat() 按颜色缓存）。
+      // 直接 node.material.vertexColors = true 会污染所有使用同一材质的 mesh，
+      // 包括那些**没有 color 属性**的 mesh —— 它们会被渲染成纯黑。
+      // 实例：五重塔基座用石色 #c8c3b8，与房屋/石灯笼共用同一材质；
+      //       后者走 AO 把共享材质标成 vertexColors:true，塔基座就变成黑砖。
+      // 修法：clone 一份专属材质再标记，互不影响。
+      var srcMat = node.material;
+      if (srcMat && !srcMat.vertexColors) {
+        var aoMat = srcMat.clone();
+        aoMat.vertexColors = true;
+        aoMat.needsUpdate = true;
+        node.material = aoMat;
       }
     });
   };

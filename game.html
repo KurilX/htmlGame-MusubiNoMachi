@@ -395,7 +395,7 @@ canvas#gl {
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
 </style>
-<!-- 构建产物：2026-11-12T03:33:51.860Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-12T06:23:08.443Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -2990,7 +2990,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   function texMat(colorHex, texKind, opt) {
     opt = opt || {};
     var rep = opt.repeat || 1;
-    var key = colorHex + '|' + texKind + '|' + rep + '|' + JSON.stringify(opt);
+    // 【关键】缓存 key 里**不能带 seed**。
+    // 踩过的坑：原来 key 用 JSON.stringify(opt)，而 opt 含 seed，
+    // 导致每棵樱花树都生成独立材质 -> flattenGroupByMaterial 分不出可合并的桶，
+    // 樱花 mesh 只从 127 降到 97（几乎没优化）。
+    // 贴图 seed 只影响纹理细节的随机分布，远景里完全看不出差异，
+    // 因此按 (颜色, 贴图种类, 重复度) 复用材质即可。
+    var key = colorHex + '|' + texKind + '|' + rep;
     if (!texMatCache[key]) {
       var tex = G.texCached(texKind, colorHex, { seed: opt.seed });
       if (tex) {
@@ -3180,6 +3186,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
 
     g.userData.trunkH = trunkH;
+
+    // 【性能】樱花树有 ~20 个 mesh（树干+3~4分枝+5~7花冠，每个花冠是细分球）。
+    // 按材质合并后：bark 1 个 + blossom 3 个（3 种粉色调各 1），从 ~20 降到 4。
+    // 实测全场樱花 127 mesh 是第二大 draw call 来源。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -3240,10 +3252,270 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       g.add(win);
     });
 
+    // 【性能】房屋约 16 个 mesh（墙/4柱/2屋顶/脊/门/暖帘/2窗），
+    // 按材质合并后约 6 个。全场 5 座房屋 = 60 mesh -> 约 30。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
-  // ---------- 竹林 ----------
+  // =====================================================================
+  // 几何体合并工具
+  //
+  // 【为什么必须做】性能基线实测：全场 1481 draw calls，其中
+  //   bamboo 433 个 mesh 单人占了 40%（每根竹竿 = 1竿+3~4节+2~3簇×3叶 ≈ 15 个 mesh）。
+  //   阴影 pass 又把这些全画一遍（999 calls 是阴影）。
+  // 扩建到 6 个地区后物件数量线性增长，draw calls 会到 4000~5000，帧率掉到 20 以下。
+  //
+  // 合并后：一类物件 = 1 个 draw call，顶点色保留各自的颜色差异。
+  // =====================================================================
+
+  /**
+   * 把一组 Mesh 合并成单个 BufferGeometry。
+   * 只支持无贴图的纯色材质（用顶点色表达颜色差异），
+   * 所以合并后的材质必须是 vertexColors: true 的白色基础材质。
+   *
+   * @param {Array<THREE.Mesh>} meshes 要合并的 mesh（会读取它们的世界变换）
+   * @param {THREE.Group} [rootGroup] 若给定，以该 group 的局部空间为基准
+   * @returns {THREE.BufferGeometry|null}
+   */
+  W.mergeMeshes = function (meshes, rootGroup) {
+    if (!meshes.length) return null;
+
+    // 先把 rootGroup 的逆变换算出来，把顶点转到 rootGroup 局部空间
+    var invRoot = new THREE.Matrix4();
+    if (rootGroup) {
+      rootGroup.updateMatrixWorld(true);
+      invRoot.copy(rootGroup.matrixWorld).invert();
+    }
+
+    var positions = [];
+    var normals = [];
+    var colors = [];
+    var uvs = [];
+    var m = new THREE.Matrix4();
+    var v = new THREE.Vector3();
+    var n = new THREE.Vector3();
+    var nm = new THREE.Matrix3();
+
+    for (var i = 0; i < meshes.length; i++) {
+      var mesh = meshes[i];
+      var geo = mesh.geometry;
+      if (!geo || !geo.attributes || !geo.attributes.position) continue;
+
+      mesh.updateMatrixWorld(true);
+      m.copy(invRoot).multiply(mesh.matrixWorld);
+      nm.getNormalMatrix(m);
+
+      var pos = geo.attributes.position;
+      var nor = geo.attributes.normal;
+      var uv = geo.attributes.uv;
+
+      // 该 mesh 的材质颜色 -> 顶点色
+      var col = mesh.material && mesh.material.color
+        ? mesh.material.color
+        : new THREE.Color(0xffffff);
+
+      // 若有索引则展开
+      var indices = geo.index ? geo.index.array : null;
+      var count = indices ? indices.length : pos.count;
+
+      for (var k = 0; k < count; k++) {
+        var idx = indices ? indices[k] : k;
+        v.fromBufferAttribute(pos, idx).applyMatrix4(m);
+        positions.push(v.x, v.y, v.z);
+
+        if (nor) {
+          n.fromBufferAttribute(nor, idx).applyMatrix3(nm).normalize();
+          normals.push(n.x, n.y, n.z);
+        } else {
+          normals.push(0, 1, 0);
+        }
+
+        // 顶点色 = 材质色（合并后靠它区分颜色）
+        colors.push(col.r, col.g, col.b);
+
+        if (uv) {
+          uvs.push(uv.getX(idx), uv.getY(idx));
+        } else {
+          uvs.push(0, 0);
+        }
+      }
+    }
+
+    if (!positions.length) return null;
+
+    var out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    out.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    out.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    out.computeBoundingSphere();
+    return out;
+  };
+
+  /**
+   * 按材质分组合并：把 group 里所有 mesh 按「材质」分桶，每桶合并成一个 mesh。
+   *
+   * 与 flattenGroup 的区别：flattenGroup 把所有部件合并成一个顶点色 mesh，
+   * 会丢失贴图。这个版本保留每个材质自己的贴图，只是把同材质的部件合并，
+   * 所以 4 个材质 = 4 个 draw call 而不是 20 个。
+   *
+   * 适用于樱花树（bark 躯干 + blossom 花冠）这类多材质但部件重复的物件。
+   *
+   * @param {THREE.Group} group
+   * @returns {number} 合并后的 mesh 数（-1 表示未合并）
+   */
+  W.flattenGroupByMaterial = function (group) {
+    group.updateMatrixWorld(true);
+
+    // 按材质 UUID 分桶
+    var buckets = {};
+    var toRemove = [];
+    group.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || o.isInstancedMesh) return;
+      var key = o.material && o.material.uuid ? o.material.uuid : 'default';
+      if (!buckets[key]) buckets[key] = { mat: o.material, meshes: [] };
+      buckets[key].meshes.push(o);
+    });
+
+    // 每个桶至少 2 个 mesh 才值得合并
+    var mergedCount = 0;
+    var invRoot = new THREE.Matrix4().copy(group.matrixWorld).invert();
+
+    for (var key in buckets) {
+      var bucket = buckets[key];
+      if (bucket.meshes.length < 2) continue;
+
+      var geo = W.mergeMeshesKeepUV(bucket.meshes, invRoot);
+      if (!geo) continue;
+
+      // 【关键】必须用**材质副本**，不能直接用 bucket.mat。
+      //
+      // 踩过的坑：直接复用 bucket.mat 会导致未参与合并的 mesh 变黑。
+      // 原因：合并后的几何体一定带 color 属性，而 bakeContactAO 里
+      // `if (geo.attributes.color) return` 会跳过它；但同材质下
+      // **没有 color 属性的其它 mesh**（如塔基座）就被 vertexColors: true
+      // 渲染成纯黑了。五重塔基座变黑砖正是这个原因。
+      //
+      // 用 clone 后：合并体有自己的材质实例，不影响任何其它 mesh。
+      var mergedMat = bucket.mat.clone();
+      delete mergedMat.userData.coloredShade;   // clone 会带过来，清掉避免重复编译
+      mergedMat.needsUpdate = true;
+
+      var m = new THREE.Mesh(geo, mergedMat);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      group.add(m);
+      mergedCount++;
+
+      for (var i = 0; i < bucket.meshes.length; i++) toRemove.push(bucket.meshes[i]);
+    }
+
+    for (var r = 0; r < toRemove.length; r++) {
+      if (toRemove[r].parent) toRemove[r].parent.remove(toRemove[r]);
+    }
+
+    return mergedCount > 0 ? mergedCount : -1;
+  };
+
+  /**
+   * 合并 mesh 但保留 UV（供带贴图的材质使用）。
+   * 与 mergeMeshes 的差别：颜色走材质本身，但仍需写顶点色。
+   *
+   * 【踩过的坑：合并后物体变纯黑】
+   * 初版这里只写了 position/normal/uv，没写 color。
+   * 但材质可能因 bakeContactAO 被设成 vertexColors: true，
+   * 而几何体缺 color 属性 -> three.js 把顶点色当 (0,0,0) -> 整个物体纯黑。
+   * 五重塔基座就是这样变成一块黑砖的（截图确认）。
+   * 修法：始终写入顶点色，且与材质 color 保持一致（默认白色）。
+   */
+  W.mergeMeshesKeepUV = function (meshes, invRoot) {
+    if (!meshes.length) return null;
+    var positions = [], normals = [], uvs = [], colors = [];
+    var m = new THREE.Matrix4();
+    var v = new THREE.Vector3();
+    var n = new THREE.Vector3();
+    var nm = new THREE.Matrix3();
+
+    for (var i = 0; i < meshes.length; i++) {
+      var mesh = meshes[i];
+      var geo = mesh.geometry;
+      if (!geo || !geo.attributes || !geo.attributes.position) continue;
+      mesh.updateMatrixWorld(true);
+      m.copy(invRoot).multiply(mesh.matrixWorld);
+      nm.getNormalMatrix(m);
+
+      var pos = geo.attributes.position;
+      var nor = geo.attributes.normal;
+      var uv = geo.attributes.uv;
+      var vcol = geo.attributes.color;    // 可能已有顶点色（AO 烘焙过的）
+
+      // 该部件自身的颜色基准：优先用几何体顶点色，其次材质色
+      var matCol = mesh.material && mesh.material.color
+        ? mesh.material.color
+        : new THREE.Color(0xffffff);
+
+      var indices = geo.index ? geo.index.array : null;
+      var count = indices ? indices.length : pos.count;
+
+      for (var k = 0; k < count; k++) {
+        var idx = indices ? indices[k] : k;
+        v.fromBufferAttribute(pos, idx).applyMatrix4(m);
+        positions.push(v.x, v.y, v.z);
+
+        if (nor) {
+          n.fromBufferAttribute(nor, idx).applyMatrix3(nm).normalize();
+          normals.push(n.x, n.y, n.z);
+        } else {
+          normals.push(0, 1, 0);
+        }
+
+        if (uv) uvs.push(uv.getX(idx), uv.getY(idx));
+        else uvs.push(0, 0);
+
+        // 顶点色：有则沿用（保留 AO / 互色差异），无则用材质色
+        if (vcol) {
+          colors.push(vcol.getX(idx), vcol.getY(idx), vcol.getZ(idx));
+        } else {
+          colors.push(matCol.r, matCol.g, matCol.b);
+        }
+      }
+    }
+
+    if (!positions.length) return null;
+    var out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    out.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    out.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    out.computeBoundingSphere();
+    return out;
+  };
+
+  W.flattenGroup = function (group, opt) {
+    opt = opt || {};
+    var meshes = [];
+    group.traverse(function (o) {
+      if (o.isMesh && o.geometry && !o.isInstancedMesh) meshes.push(o);
+    });
+
+    var merged = W.mergeMeshes(meshes, group);
+    if (!merged) return null;
+
+    // 统一材质：白色基础色 + 顶点色
+    var mat = G.celMaterial('#FFFFFF', {
+      steps: opt.steps != null ? opt.steps : 3,
+      darkness: opt.darkness != null ? opt.darkness : 0.86,
+      vertexColors: true
+    });
+
+    var out = new THREE.Mesh(merged, mat);
+    out.castShadow = true;
+    out.receiveShadow = true;
+    return out;
+  };
+
   //
   // 踩过的坑（第一版很糟）：竹竿用 CylinderGeometry(r, r*1.15, h, 5) 深绿 5 面体，
   // 在阴影里渲染成近乎纯黑的细竖条，完全读不出"竹子"；叶子是零散的深色小片飘在
@@ -3341,7 +3613,25 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       g.add(crown);
     }
 
-    g.userData.stalks = stalks;
+    // 【性能改造】把整丛竹子合并。
+    //
+    // 改造前：每根竹竿 = 1竿 + 3~4节 + 2~3簇×3叶 + 1冠 ≈ 15 个独立 mesh。
+    // 4 处竹林一共 433 个 mesh，占全场 draw calls 的 40%（实测）。
+    // 合并后每丛 1 个 mesh，draw call 从 433 降到 4。
+    //
+    // 【踩过的坑】一开始用 flattenGroup（把所有材质烘成顶点色），
+    // 结果竹子变成灰白色 —— 因为竹竿用的是 bambooSkin **贴图**，
+    // 而合并后材质是纯白 + 顶点色，贴图丢了，顶点色又是贴图材质的
+    // color（白色），所以整丛发灰。
+    // 正确做法：flattenGroupByMaterial —— 按材质分桶合并，保留各自贴图。
+    // 竹竿（bambooSkin）1 桶 + 竹节/叶/冠的纯色各 1 桶，共约 4~5 桶。
+    var merged = W.flattenGroupByMaterial(g);
+    if (merged > 0) {
+      g.userData.merged = true;
+      g.userData.swingPhase = rnd() * 6.28;
+    } else {
+      g.userData.stalks = stalks;   // 合并失败则回退到逐根摆动
+    }
     return g;
   };
 
@@ -3706,6 +3996,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
 
     g.userData.height = y;
+
+    // 【性能】五重塔是全场最重的单个物件：5 层 × (身+2檐+4檐角+窗) + 基座 + 相轮 + 4环
+    // ≈ 38 个 mesh，两座塔就是 76 mesh。
+    // 按材质合并后：塔身1 + 檐1 + 窗1 + 基座2 + 金环1 ≈ 6 个。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -3788,6 +4084,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     pl.position.y = 1.61 * s;
     g.add(pl);
     g.userData.light = pl;
+
+    // 【性能】石灯笼 ~12 个 mesh × 8 座 = 96 mesh。
+    // 按材质合并后：石色 3 档 + 发光窗 1 个 = 4 个，从 96 降到 32。
+    // 注意 PointLight 不是 Mesh，不会被合并掉。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -7021,9 +7323,20 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       }
       geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-      if (node.material && !node.material.vertexColors) {
-        node.material.vertexColors = true;
-        node.material.needsUpdate = true;
+      // 【关键】必须给这个 mesh 一个**独立的材质副本**。
+      //
+      // 踩过的坑：material 是全局缓存共享的（art 里的 mat()/texMat() 按颜色缓存）。
+      // 直接 node.material.vertexColors = true 会污染所有使用同一材质的 mesh，
+      // 包括那些**没有 color 属性**的 mesh —— 它们会被渲染成纯黑。
+      // 实例：五重塔基座用石色 #c8c3b8，与房屋/石灯笼共用同一材质；
+      //       后者走 AO 把共享材质标成 vertexColors:true，塔基座就变成黑砖。
+      // 修法：clone 一份专属材质再标记，互不影响。
+      var srcMat = node.material;
+      if (srcMat && !srcMat.vertexColors) {
+        var aoMat = srcMat.clone();
+        aoMat.vertexColors = true;
+        aoMat.needsUpdate = true;
+        node.material = aoMat;
       }
     });
   };
