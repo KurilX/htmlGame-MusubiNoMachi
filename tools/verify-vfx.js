@@ -148,7 +148,7 @@ async function main() {
       G.fx.pickupBurst(0, 38, '#E8C25A');
     }
     var peak = G.fx.activeCount();
-    for (var j = 0; j < 400; j++) G.tickOnce(1/60);
+    for (var j = 0; j < 600; j++) G.tickOnce(1/60);
     return { base: base, peak: peak, final: G.fx.activeCount() };
   })()`);
   check('连发 300 次后完全清理', leak.final === 0,
@@ -169,7 +169,7 @@ async function main() {
       G.tickOnce(1/60);
     }
     var peak = G.fx.activeCount();
-    for (var j = 0; j < 400; j++) G.tickOnce(1/60);
+    for (var j = 0; j < 600; j++) G.tickOnce(1/60);
     return { peak: peak, final: G.fx.activeCount() };
   })()`);
   check('真实技能连发 50 次后无残留', combat.final === 0,

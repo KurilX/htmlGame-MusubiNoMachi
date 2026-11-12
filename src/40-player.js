@@ -64,7 +64,10 @@
       buffs: [],
       // 战斗时序（给渲染层读）
       attackAnim: 0,
-      moveLock: 0
+      moveLock: 0,
+      // 技能施放/攻击动作锁：这段时间内朝向由鼠标决定，不被移动覆盖。
+      // 用于区分"纯跑动"与"边跑边打"（动作游戏惯例）。
+      actionLock: 0
     };
     P.state = st;
     P.recalcStats();
@@ -143,6 +146,7 @@
     st.hitFlash = Math.max(0, st.hitFlash - dt);
     st.moveLock = Math.max(0, st.moveLock - dt);
     st.attackAnim = Math.max(0, st.attackAnim - dt);
+    st.actionLock = Math.max(0, st.actionLock - dt);
     if (st.dodge.cd > 0) st.dodge.cd -= dt;
     if (st.dodge.timer > 0) {
       st.dodge.timer -= dt;
@@ -183,7 +187,20 @@
         var spd = st.speed * (st.moveSpeedMul || 1) * terr;
         st.vx = dir.x * spd;
         st.vz = dir.z * spd;
-        st.facing = Math.atan2(dir.x, dir.z);  // 面向移动方向
+
+        // 【2026-11 修复：移动时朝向被绑死，鼠标瞄准失效】
+        // 原来这里无条件 st.facing = 移动方向，导致：
+        //   - 一边走一边打时，朝向永远是"前进方向"，鼠标指哪都没用
+        //   - 玩家看到的现象就是"攻击方向不跟鼠标"
+        // 正确行为（动作游戏惯例）：
+        //   战斗状态下朝向由鼠标决定，只有纯移动（无攻击意图）才面向移动方向。
+        // 判定"有攻击意图"：刚攻击过 / 攻击键按住 / 正在放技能 / 攻击动画中。
+        var aiming = input.mouse.down || input.keys.attack ||
+                     st.attackAnim > 0 || st.attackCd > 0 ||
+                     st.actionLock > 0;
+        if (!aiming) {
+          st.facing = Math.atan2(dir.x, dir.z);  // 仅纯移动时面向移动方向
+        }
         moving = true;
       } else {
         st.vx *= Math.pow(0.001, dt);
@@ -305,9 +322,15 @@
     st.attackCd = st.attackCdMax;
     st.attackAnim = 0.24;
     st.moveLock = 0.16;
+    // 攻击动作期间锁住朝向，避免同一帧内被移动逻辑覆盖回"前进方向"
+    st.actionLock = Math.max(st.actionLock, 0.25);
 
-    // 朝鼠标方向
-    var g = camera.screenToGround(input.mouse.x, input.mouse.y);
+    // 朝鼠标方向。
+    // 必须把「玩家脚下地面高度」传进去：相机与屏幕坐标的求交平面
+    // 要和玩家同高，否则站在坡上时射线会先穿过 y=0 平面，
+    // 交点比鼠标实际指向的地方远十几单位（曾导致出村后完全打不准）。
+    var playerGroundY = G.world.groundY(st.x, st.z);
+    var g = camera.screenToGround(input.mouse.x, input.mouse.y, playerGroundY);
     var dx = g.x - st.x, dz = g.z - st.z;
     var len = Math.sqrt(dx * dx + dz * dz);
     if (len > 0.2) {
@@ -361,8 +384,10 @@
     var cdState = st.skills[n] || (st.skills[n] = { cd: 0 });
     if (cdState.cd > 0) return;
 
-    // 朝鼠标方向
-    var g = camera.screenToGround(input.mouse.x, input.mouse.y);
+    // 朝鼠标方向。同 basicAttack：求交平面必须与玩家同高，
+    // 否则站在坡上时鼠标指向会偏出十几单位（出村后技能完全打不准）。
+    var playerGroundY = G.world.groundY(st.x, st.z);
+    var g = camera.screenToGround(input.mouse.x, input.mouse.y, playerGroundY);
     var dx = g.x - st.x, dz = g.z - st.z;
     var ang = Math.atan2(dx, dz);
     if (Math.abs(dx) + Math.abs(dz) > 0.3) st.facing = ang;
@@ -370,6 +395,8 @@
     var ok = G.skills.cast(n, def, st, ang, { x: g.x, z: g.z });
     if (ok) {
       cdState.cd = def.cooldown;
+      // 技能动作期间锁住朝向（同 basicAttack），防止被移动逻辑覆盖
+      st.actionLock = Math.max(st.actionLock, 0.35);
       G.bus.emit('ui:skillcd', { n: n, cd: def.cooldown, max: def.cooldown });
     }
   };

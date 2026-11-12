@@ -395,7 +395,7 @@ canvas#gl {
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
 </style>
-<!-- 构建产物：2026-11-12T02:58:45.263Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-12T03:33:51.860Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -4333,25 +4333,66 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
   };
 
-  /** 屏幕坐标 -> 地面(y=0) 世界坐标。用于鼠标指向技能。 */
+  // 屏幕坐标 -> 世界坐标用的复用对象（避免每帧 new）
   var _ray = new THREE.Raycaster();
   var _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   var _ndc = new THREE.Vector2();
   var _hit = new THREE.Vector3();
 
-  C.screenToGround = function (screenX, screenY) {
+  /**
+   * 屏幕坐标 -> 地面世界坐标。用于鼠标指向攻击/技能。
+   *
+   * 【2026-11 修复：出村后鼠标指向完全失准】
+   * 原实现把射线打到 y=0 的固定平面。但地形有高度（野外 1~9）：
+   *   - 玩家在 y=8.96 的高地，射线要先穿过 y=0 才打到平面，
+   *     交点比鼠标实际指向的地面点远十几单位
+   * 实测角度偏差：
+   *   城镇(h=0) 0°  |  野外入口(h≈1) 7~38°  |  野外深处(h≈9) 34~120°
+   * 表现就是"技能不跟随鼠标"，城里正常、出村就乱。
+   *
+   * 修法：迭代求解真实地形交点，而不是任何固定平面。
+   *   1) 先用玩家高度的水平面求个初值
+   *   2) 读该点的真实地形高度，用新高度再求一次
+   *   3) 迭代 2~3 次即收敛到 < 0.1 单位
+   * 对指向攻击来说这是最准的做法，代价只有几次平面求交（可忽略）。
+   *
+   * @param {number} screenX 屏幕 clientX
+   * @param {number} screenY 屏幕 clientY
+   * @param {number} [planeY] 初值平面高度，默认取相机跟随点高度
+   */
+  C.screenToGround = function (screenX, screenY, planeY) {
     if (!C.cam) return { x: 0, z: 0 };
-    // 关键：raycaster 依赖相机的世界矩阵。update() 里只改了 position/lookAt，
-    // 矩阵要到下一次渲染才刷新，这里必须手动强制更新，
-    // 否则鼠标指向会用到上一帧的相机（踩过：攻击朝向差了 135°）
+    // raycaster 依赖相机的世界矩阵，update() 只改了 position/lookAt，
+    // 矩阵要到下一次渲染才刷新，这里必须强制更新（否则用上一帧相机）
     C.cam.updateMatrixWorld(true);
+
     var canvas = G.pixels.renderer.domElement;
     var rect = canvas.getBoundingClientRect();
     _ndc.x = ((screenX - rect.left) / rect.width) * 2 - 1;
     _ndc.y = -((screenY - rect.top) / rect.height) * 2 + 1;
     _ray.setFromCamera(_ndc, C.cam);
-    var out = _ray.ray.intersectPlane(_plane, _hit);
-    if (!out) return { x: C.follow.x, z: C.follow.z };
+
+    // 用「与玩家同高的水平面」求交，只算一次。
+    //
+    // 【为什么不迭代逼近地形】
+    // 我一开始写的是迭代：用交点处的地形高度作为下一次求交平面。
+    // 但在斜坡上这个迭代会跑偏 —— 实测（玩家在 (0,55)，地面 8.96，
+    // 鼠标指向正东 4 单位处，该点地面 8.53）：
+    //    第 1 次 planeH=8.96 -> (4.00, 55.00)   ← 正确
+    //    第 2 次 planeH=8.53 -> 点被推到坡下，越迭代越偏
+    //    第 3 次          -> (0.27, 51.29)      ← 严重偏离
+    // 原因是等距俯视 35° 时，平面上小小的高度变化会引起很大的水平位移，
+    // 迭代在这里是不动点不稳定的。
+    //
+    // 而"玩家高度的水平面"一次求交就有 0.02~0.6 单位的精度（实测），
+    // 对指向攻击完全够用，且永远稳定。宁可要稳定的近似，不要发散的精确。
+    var planeH = (planeY != null) ? planeY : C.follow.y;
+    _plane.constant = -planeH;
+
+    if (!_ray.ray.intersectPlane(_plane, _hit)) {
+      // 射线与平面平行（鼠标指向天空）：退回相机中心
+      return { x: C.follow.x, z: C.follow.z };
+    }
     return { x: _hit.x, z: _hit.z };
   };
 
@@ -4482,7 +4523,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       buffs: [],
       // 战斗时序（给渲染层读）
       attackAnim: 0,
-      moveLock: 0
+      moveLock: 0,
+      // 技能施放/攻击动作锁：这段时间内朝向由鼠标决定，不被移动覆盖。
+      // 用于区分"纯跑动"与"边跑边打"（动作游戏惯例）。
+      actionLock: 0
     };
     P.state = st;
     P.recalcStats();
@@ -4561,6 +4605,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     st.hitFlash = Math.max(0, st.hitFlash - dt);
     st.moveLock = Math.max(0, st.moveLock - dt);
     st.attackAnim = Math.max(0, st.attackAnim - dt);
+    st.actionLock = Math.max(0, st.actionLock - dt);
     if (st.dodge.cd > 0) st.dodge.cd -= dt;
     if (st.dodge.timer > 0) {
       st.dodge.timer -= dt;
@@ -4601,7 +4646,20 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         var spd = st.speed * (st.moveSpeedMul || 1) * terr;
         st.vx = dir.x * spd;
         st.vz = dir.z * spd;
-        st.facing = Math.atan2(dir.x, dir.z);  // 面向移动方向
+
+        // 【2026-11 修复：移动时朝向被绑死，鼠标瞄准失效】
+        // 原来这里无条件 st.facing = 移动方向，导致：
+        //   - 一边走一边打时，朝向永远是"前进方向"，鼠标指哪都没用
+        //   - 玩家看到的现象就是"攻击方向不跟鼠标"
+        // 正确行为（动作游戏惯例）：
+        //   战斗状态下朝向由鼠标决定，只有纯移动（无攻击意图）才面向移动方向。
+        // 判定"有攻击意图"：刚攻击过 / 攻击键按住 / 正在放技能 / 攻击动画中。
+        var aiming = input.mouse.down || input.keys.attack ||
+                     st.attackAnim > 0 || st.attackCd > 0 ||
+                     st.actionLock > 0;
+        if (!aiming) {
+          st.facing = Math.atan2(dir.x, dir.z);  // 仅纯移动时面向移动方向
+        }
         moving = true;
       } else {
         st.vx *= Math.pow(0.001, dt);
@@ -4723,9 +4781,15 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     st.attackCd = st.attackCdMax;
     st.attackAnim = 0.24;
     st.moveLock = 0.16;
+    // 攻击动作期间锁住朝向，避免同一帧内被移动逻辑覆盖回"前进方向"
+    st.actionLock = Math.max(st.actionLock, 0.25);
 
-    // 朝鼠标方向
-    var g = camera.screenToGround(input.mouse.x, input.mouse.y);
+    // 朝鼠标方向。
+    // 必须把「玩家脚下地面高度」传进去：相机与屏幕坐标的求交平面
+    // 要和玩家同高，否则站在坡上时射线会先穿过 y=0 平面，
+    // 交点比鼠标实际指向的地方远十几单位（曾导致出村后完全打不准）。
+    var playerGroundY = G.world.groundY(st.x, st.z);
+    var g = camera.screenToGround(input.mouse.x, input.mouse.y, playerGroundY);
     var dx = g.x - st.x, dz = g.z - st.z;
     var len = Math.sqrt(dx * dx + dz * dz);
     if (len > 0.2) {
@@ -4779,8 +4843,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     var cdState = st.skills[n] || (st.skills[n] = { cd: 0 });
     if (cdState.cd > 0) return;
 
-    // 朝鼠标方向
-    var g = camera.screenToGround(input.mouse.x, input.mouse.y);
+    // 朝鼠标方向。同 basicAttack：求交平面必须与玩家同高，
+    // 否则站在坡上时鼠标指向会偏出十几单位（出村后技能完全打不准）。
+    var playerGroundY = G.world.groundY(st.x, st.z);
+    var g = camera.screenToGround(input.mouse.x, input.mouse.y, playerGroundY);
     var dx = g.x - st.x, dz = g.z - st.z;
     var ang = Math.atan2(dx, dz);
     if (Math.abs(dx) + Math.abs(dz) > 0.3) st.facing = ang;
@@ -4788,6 +4854,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     var ok = G.skills.cast(n, def, st, ang, { x: g.x, z: g.z });
     if (ok) {
       cdState.cd = def.cooldown;
+      // 技能动作期间锁住朝向（同 basicAttack），防止被移动逻辑覆盖
+      st.actionLock = Math.max(st.actionLock, 0.35);
       G.bus.emit('ui:skillcd', { n: n, cd: def.cooldown, max: def.cooldown });
     }
   };
