@@ -1,73 +1,155 @@
-/* 51-terrain.js — 地形高度场
+/* 51-terrain.js — 地形高度场（多区域版 v2）
  *
- * 设计原则（很重要）：
- *  1) 高度必须是一个**纯函数** h(x,z)，任何模块随时可查，不需要查询网格。
- *  2) 城镇区域保持绝对平坦（h=0）——城镇是安全区，台阶/坡度会让 NPC 和
- *     建筑对位变得脆弱，且视觉上城镇平整更像"人工聚落"。
- *  3) 野外用几个"地形骨架"叠加：缓坡 + 溪谷下切 + 远处高地。
- *  4) 高度函数必须是**连续可导**的（smoothstep 过渡），否则实体会在
- *     硬边处"跳"一格。
+ * 【v1 的失败教训，值得留着】
+ * 第一版我用"多区域权重混合"：每个区域算出自己的高度，再按距离权重加权平均。
+ * 实测交界处出现 17~18 单位的高度断层（相当于一堵悬崖），原因有三：
+ *   1) 相邻区域的高度基线差太多（平野 z=70 处高 10.2，码头只有 1.8），
+ *      加权平均在两个区域都占 30% 的位置会得到 ~5，但一旦权重偏向某边就跳到 1.8 或 10.2
+ *   2) 区域权重都趋近 0 的"空隙"里归一化除极小数，数值爆炸
+ *   3) 椭圆区域之间必然有空隙，空隙处无定义
+ *
+ * v2 的策略彻底换掉了：
+ *   **先定义一个连续的全局基础地形，再把局部特征（山、海、溪）作为"可加/可限制"的修饰叠加。**
+ *   这样任何位置都有明确定义，且天然连续——因为基础地形本身就是平滑函数。
+ *
+ * 具体做法：
+ *   base(x,z) = 从南到北的整体地势（城镇处刚好为 0）
+ *   然后：
+ *     - 神山：在基础之上**加上**一个高斯状的山体隆起（永远只会往上堆，不会和别处打架）
+ *     - 海岸：在基础之上**减去**一个朝东倾斜的量，并 clamp 到海平面以下
+ *     - 溪谷：局部下切
+ *   最后整平城镇。
+ *   全是"加法/乘法"，没有除法归一化，所以不会爆。
  */
 (function (G) {
   'use strict';
 
   var T = G.terrain = {};
 
-  // 城镇范围（沿用 DATA.TOWN 的边界，向内收 2 单位作为过渡带）
-  var TOWN_PAD = 2.5;
+  // =====================================================================
+  // 区域参数（供刷怪/地名/物件摆放查询用）
+  // =====================================================================
+  var REGIONS = {
+    town:     { cx: 0,    cz: 0,    rx: 34,  rz: 26 },
+    field:    { cx: 0,    cz: 40,   rx: 48,  rz: 40 },
+    // 山的中心要在峰顶，rz 要够大让山脚平缓延伸到 z=90 左右。
+    // 【踩过的坑】原来 cz=150, rz=56，山体在 z=206 处才归零，
+    // 但玩家走到 z=170 时 hillTop 已经掉了 40%（从 41 降到 24），
+    // 看起来像"爬过山顶又下山"，实际是椭圆边界截断。
+    // 现在 cz=140, rz=72：峰顶在 z=140，山脚延伸到 z=212。
+    mountain: { cx: 0,    cz: 140,  rx: 66,  rz: 72 },
+    // 海岸区域要覆盖到"海里"
+    harbor:   { cx: 120,  cz: 62,   rx: 42,  rz: 34 },
+    beach:    { cx: 150,  cz: 130,  rx: 78,  rz: 66 }
+  };
+  T.REGIONS = REGIONS;
 
-  /**
-   * 城镇权重 0..1。
-   * 城镇内 = 1（完全平整），过渡带内平滑衰减到 0。
-   */
-  function townWeight(x, z) {
-    var D = G.DATA.TOWN;
-    // 到城镇矩形边界的有符号距离（内部为正）
-    var dx = Math.min(x - D.minX, D.maxX - x);
-    var dz = Math.min(z - D.minZ, D.maxZ - z);
-    var d = Math.min(dx, dz);
-    if (d <= 0) return 0;                       // 城外
-    if (d >= TOWN_PAD) return 1;                // 城内深处
-    return G.M.smoothstep(d / TOWN_PAD);        // 过渡带
+  var TOWN_PAD = 6;
+
+  function normDist(r, x, z) {
+    var dx = (x - r.cx) / r.rx;
+    var dz = (z - r.cz) / r.rz;
+    return Math.sqrt(dx * dx + dz * dz);
   }
 
-  /**
-   * 野外基础起伏：从城镇边界往北缓升，配合两道横向的"坡坎"。
-   */
-  function fieldHeight(x, z) {
-    // 北高南低：越往副本方向越高
-    var rise = G.M.clamp01((z - 12) / 54) * 6.2;
-
-    // 第一道坡坎：z≈26，缓坡
-    var step1 = G.M.smoothstep((z - 22) / 8) * 1.5;
-
-    // 第二道坡坎：z≈48，更陡
-    var step2 = G.M.smoothstep((z - 44) / 7) * 2.4;
-
-    // 东西两侧略微抬升（盆地感，中间是走道）
-    var bowl = Math.pow(Math.abs(x) / 34, 2.2) * 2.8;
-
-    // 细微噪声（用两个不同频率的正弦代替，避免引入额外随机性）
-    var wobble = Math.sin(x * 0.21) * Math.cos(z * 0.17) * 0.35
-               + Math.sin(x * 0.53 + 1.7) * 0.12;
-
-    return rise + step1 + step2 + bowl + wobble;
+  /** 高斯状隆起：中心 1，边缘平滑到 0（不会突变） */
+  function bump(x, z, r, power) {
+    var d = normDist(r, x, z);
+    if (d >= 1) return 0;
+    var t = 1 - d;
+    return Math.pow(t, power || 2);
   }
 
-  /**
-   * 溪谷下切：沿 x≈-22 的一条南北向沟。
-   * 用平滑的谷形（不是 V 字），并让水面高度跟随。
-   */
+  // =====================================================================
+  // 1) 全局基础地形：从南到北的整体地势
+  //
+  // 要求：连续、无除法、城镇处为 0。
+  // 用 smoothstep 拼接几段高度，段与段之间用 smoothstep 过渡，不会有台阶。
+  // =====================================================================
+  function baseHeight(x, z) {
+    // 南北向的整体抬升：z=0 时 0，z=60 时约 6，z=110 时约 9
+    var north = G.M.smoothstep(G.M.clamp01(z / 110)) * 9.0;
+
+    // 东西向的轻微盆地（中间是走道，两侧略高）
+    var bowl = Math.pow(Math.abs(x) / 60, 2) * 2.2;
+
+    // 细节噪声（两个频率，幅度小）
+    var wobble = Math.sin(x * 0.13) * Math.cos(z * 0.11) * 0.35
+               + Math.sin(x * 0.41 + 1.3) * 0.14;
+
+    return north + bowl + wobble;
+  }
+
+  // =====================================================================
+  // 2) 神山：叠加式隆起（只会往上加，永远不冲突）
+  // =====================================================================
+  function mountainAdd(x, z) {
+    var r = REGIONS.mountain;
+
+    // 主山体：中心高 34，用较高次幂让山脚缓、山顶尖
+    var core = bump(x, z, r, 1.8) * 34;
+
+    // 三道山脊台阶（让山体有层次，不是光滑馒头）
+    // 用 sin 制造环状的"等高线台阶"，再乘以权重让它只在山体范围内生效
+    var ridgeMask = bump(x, z, r, 2.5);
+    var ridge = Math.sin(normDist(r, x, z) * Math.PI * 6) * 1.6 * ridgeMask;
+
+    // 山道：x≈0 处地势略平（可走），用减法降低
+    var pathMask = G.M.smoothstep(Math.abs(x) / 12) * bump(x, z, r, 2.0);
+    var path = pathMask * 3.0;
+
+    return core + ridge + path;
+  }
+
+  // =====================================================================
+  // 3) 海岸：把海滨区域整体压平成"低平台地 + 入海缓坡"
+  //
+  // 【v2 第一次修正】原来只用 -eastDrop 做减法，但 baseHeight 的 north 项
+  // 在 z=74 处已经贡献了 6 单位、z=140 处 9 单位，减法抵不过，
+  // 结果码头 h=13.8、沙滩海边 h=21.5（本该在水下）。
+  // 正确做法：沿海区域不是"减法"，而是"把高度**替换**成海岸剖面"，
+  // 用 weight 在原高度与海岸剖面之间插值。
+  // =====================================================================
+  function coastProfile(x, z) {
+    var r = REGIONS.beach;
+    var rh = REGIONS.harbor;
+
+    var wBeach = bump(x, z, r, 1.0);
+    var wHarbor = bump(x, z, rh, 1.0);
+    var w = Math.max(wBeach, wHarbor);
+    if (w <= 0) return { h: null, w: 0 };
+
+    // 海岸剖面：西高东低
+    //   x < 88   -> +2.4（内陆台地，接平野）
+    //   x = 118  ->  0  （海岸线，潮间带）
+    //   x > 150  -> -2.4（海床）
+    var t = G.M.clamp01((x - 88) / 62);
+    var h = G.M.lerp(2.4, -2.4, t);
+
+    // 沙滩细节：沙丘与潮痕
+    var dune = Math.sin(z * 0.19 + 0.7) * 0.28 + Math.sin(x * 0.23) * 0.18;
+    h += dune * 0.5;
+
+    // 码头区域保持更平整（要放建筑与码头栈桥）
+    if (wHarbor > wBeach) {
+      h = G.M.lerp(h, 1.6, wHarbor * 0.85);
+    }
+
+    return { h: h, w: w };
+  }
+
+  // =====================================================================
+  // 4) 溪谷（保留原逻辑，只在平野区域生效）
+  // =====================================================================
   var RIVER = { centerX: -22, halfWidth: 3.6, depth: 2.2, zMin: 14, zMax: 56 };
+  T.river = RIVER;
 
   function riverCarve(x, z) {
     if (z < RIVER.zMin || z > RIVER.zMax) return 0;
     var dx = Math.abs(x - RIVER.centerX);
     if (dx > RIVER.halfWidth) return 0;
-    // 谷形：中心最深，边缘平滑到 0
     var t = 1 - dx / RIVER.halfWidth;
     var shape = G.M.smoothstep(t);
-    // 南北两端淡出
     var zFade = Math.min(
       G.M.smoothstep((z - RIVER.zMin) / 3),
       G.M.smoothstep((RIVER.zMax - z) / 3)
@@ -75,45 +157,92 @@
     return -RIVER.depth * shape * zFade;
   }
 
-  /**
-   * 主高度函数。
-   * @returns {number} 世界 y（地面表面）
-   */
+  // =====================================================================
+  // 城镇整平权重
+  // =====================================================================
+  function townWeight(x, z) {
+    // 城镇用矩形（和 zones.js 的 TOWN 对齐），外扩 TOWN_PAD 做过渡
+    var D = G.DATA.TOWN;
+    var dx = Math.min(x - D.minX, D.maxX - x);
+    var dz = Math.min(z - D.minZ, D.maxZ - z);
+    var d = Math.min(dx, dz);
+    if (d <= 0) return 0;
+    if (d >= TOWN_PAD) return 1;
+    return G.M.smoothstep(d / TOWN_PAD);
+  }
+
+  // =====================================================================
+  // 主高度函数：全部是加法/乘法，无除法归一化
+  // =====================================================================
   T.height = function (x, z) {
+    var base = baseHeight(x, z);
+    var h = base;
+
+    // 山：往上堆
+    h += mountainAdd(x, z);
+
+    // 海岸：用"剖面替换"而不是减法（详见 coastProfile 的注释）
+    //
+    // 【踩过的坑：海滩路上有 10 单位断层】
+    // 原来用 smoothstep(w * 1.6) 做插值权重。w=0.4 时权重只有 0.36，
+    // 于是内陆高值（10.9）与海岸剖面（0.9）之间还有一个"半高"的中间态，
+    // 但相邻采样点 w 变化快，导致 20 单位距离内高度从 10.9 掉到 0.94。
+    // 修法：把 w 先做一次 smoothstep 拉伸，让"快速衰减带"变宽，
+    // 同时用 w 本身的平方根让小权重也产生足够的替换力。
+    var coast = coastProfile(x, z);
+    if (coast.w > 0 && coast.h !== null) {
+      var cw = Math.sqrt(G.M.clamp01(coast.w));          // 小权重也能拉动
+      cw = G.M.smoothstep(G.M.clamp01(cw * 1.3));        // 再平滑一次
+      h = G.M.lerp(h, coast.h, cw);
+    }
+
+    // 溪谷：局部下切
+    h += riverCarve(x, z);
+
+    // 城镇整平：向 0 插值
     var tw = townWeight(x, z);
-    // 城镇内强制 0；过渡带内插值
-    var field = fieldHeight(x, z) + riverCarve(x, z);
-    return field * (1 - tw);
+    if (tw > 0) {
+      h = h * (1 - tw);
+    }
+
+    return h;
   };
 
-  /** 地面法线（用于让物体贴合坡面，目前只用于立绘的轻微倾斜） */
+  /** 坡度（有限差分） */
   T.slope = function (x, z) {
     var e = 0.5;
     var hl = T.height(x - e, z), hr = T.height(x + e, z);
     var hd = T.height(x, z - e), hu = T.height(x, z + e);
-    return {
-      dx: (hr - hl) / (2 * e),
-      dz: (hu - hd) / (2 * e)
-    };
+    return { dx: (hr - hl) / (2 * e), dz: (hu - hd) / (2 * e) };
   };
 
-  /** 坡度大小 0..~（0=平地） */
   T.steepness = function (x, z) {
     var s = T.slope(x, z);
     return Math.sqrt(s.dx * s.dx + s.dz * s.dz);
   };
 
-  /** 河流中心线（供水面与碰撞使用） */
-  T.river = RIVER;
+  /** 海平面 */
+  T.seaLevel = function () { return -0.8; };
 
-  /** 水面高度：溪谷中心的固定水位 */
-  T.waterLevel = function () {
-    return -1.15;
+  /** 溪流水位 */
+  T.waterLevel = function () { return -1.15; };
+
+  T.isUnderwater = function (x, z) {
+    var h = T.height(x, z);
+    var r = REGIONS;
+    var atSea = bump(x, z, r.beach, 1.0) > 0.02 || bump(x, z, r.harbor, 1.0) > 0.02;
+    var level = atSea ? T.seaLevel() : T.waterLevel();
+    return h < level;
   };
 
-  /** 判断某点是否在水下（用于减速） */
-  T.isUnderwater = function (x, z) {
-    return T.height(x, z) < T.waterLevel();
+  /** 某点所属区域（取最近的区域中心） */
+  T.regionAt = function (x, z) {
+    var best = 'field', bestD = 1e9;
+    for (var k in REGIONS) {
+      var d = normDist(REGIONS[k], x, z);
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    return best;
   };
 
 })(window.G = window.G || {});

@@ -395,7 +395,7 @@ canvas#gl {
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
 </style>
-<!-- 构建产物：2026-11-12T03:33:51.860Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-12T06:45:46.129Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -973,8 +973,16 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   G.DATA = G.DATA || {};
 
   // 世界范围
+  //
+  // 【2026-11 扩建】从 68x82 扩到 240x300，容纳 6 个地区：
+  //   北部：神山（主峰 z≈150，h≈43）
+  //   南部：結ノ町（城镇，安全区）
+  //   中部：霞ヶ原（野外，原内容）
+  //   东南：码头小镇（海滨台地）
+  //   东部：沙滩野外（海滩入海）
+  // 边界留了余量，避免玩家走到地面网格边缘看到天空。
   G.DATA.WORLD = {
-    minX: -34, maxX: 34, minZ: -16, maxZ: 66,
+    minX: -100, maxX: 180, minZ: -50, maxZ: 220,
     spawn: { x: 0, z: 6 }          // 出生点（城镇中央）
   };
 
@@ -2990,7 +2998,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   function texMat(colorHex, texKind, opt) {
     opt = opt || {};
     var rep = opt.repeat || 1;
-    var key = colorHex + '|' + texKind + '|' + rep + '|' + JSON.stringify(opt);
+    // 【关键】缓存 key 里**不能带 seed**。
+    // 踩过的坑：原来 key 用 JSON.stringify(opt)，而 opt 含 seed，
+    // 导致每棵樱花树都生成独立材质 -> flattenGroupByMaterial 分不出可合并的桶，
+    // 樱花 mesh 只从 127 降到 97（几乎没优化）。
+    // 贴图 seed 只影响纹理细节的随机分布，远景里完全看不出差异，
+    // 因此按 (颜色, 贴图种类, 重复度) 复用材质即可。
+    var key = colorHex + '|' + texKind + '|' + rep;
     if (!texMatCache[key]) {
       var tex = G.texCached(texKind, colorHex, { seed: opt.seed });
       if (tex) {
@@ -3180,6 +3194,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
 
     g.userData.trunkH = trunkH;
+
+    // 【性能】樱花树有 ~20 个 mesh（树干+3~4分枝+5~7花冠，每个花冠是细分球）。
+    // 按材质合并后：bark 1 个 + blossom 3 个（3 种粉色调各 1），从 ~20 降到 4。
+    // 实测全场樱花 127 mesh 是第二大 draw call 来源。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -3240,10 +3260,270 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       g.add(win);
     });
 
+    // 【性能】房屋约 16 个 mesh（墙/4柱/2屋顶/脊/门/暖帘/2窗），
+    // 按材质合并后约 6 个。全场 5 座房屋 = 60 mesh -> 约 30。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
-  // ---------- 竹林 ----------
+  // =====================================================================
+  // 几何体合并工具
+  //
+  // 【为什么必须做】性能基线实测：全场 1481 draw calls，其中
+  //   bamboo 433 个 mesh 单人占了 40%（每根竹竿 = 1竿+3~4节+2~3簇×3叶 ≈ 15 个 mesh）。
+  //   阴影 pass 又把这些全画一遍（999 calls 是阴影）。
+  // 扩建到 6 个地区后物件数量线性增长，draw calls 会到 4000~5000，帧率掉到 20 以下。
+  //
+  // 合并后：一类物件 = 1 个 draw call，顶点色保留各自的颜色差异。
+  // =====================================================================
+
+  /**
+   * 把一组 Mesh 合并成单个 BufferGeometry。
+   * 只支持无贴图的纯色材质（用顶点色表达颜色差异），
+   * 所以合并后的材质必须是 vertexColors: true 的白色基础材质。
+   *
+   * @param {Array<THREE.Mesh>} meshes 要合并的 mesh（会读取它们的世界变换）
+   * @param {THREE.Group} [rootGroup] 若给定，以该 group 的局部空间为基准
+   * @returns {THREE.BufferGeometry|null}
+   */
+  W.mergeMeshes = function (meshes, rootGroup) {
+    if (!meshes.length) return null;
+
+    // 先把 rootGroup 的逆变换算出来，把顶点转到 rootGroup 局部空间
+    var invRoot = new THREE.Matrix4();
+    if (rootGroup) {
+      rootGroup.updateMatrixWorld(true);
+      invRoot.copy(rootGroup.matrixWorld).invert();
+    }
+
+    var positions = [];
+    var normals = [];
+    var colors = [];
+    var uvs = [];
+    var m = new THREE.Matrix4();
+    var v = new THREE.Vector3();
+    var n = new THREE.Vector3();
+    var nm = new THREE.Matrix3();
+
+    for (var i = 0; i < meshes.length; i++) {
+      var mesh = meshes[i];
+      var geo = mesh.geometry;
+      if (!geo || !geo.attributes || !geo.attributes.position) continue;
+
+      mesh.updateMatrixWorld(true);
+      m.copy(invRoot).multiply(mesh.matrixWorld);
+      nm.getNormalMatrix(m);
+
+      var pos = geo.attributes.position;
+      var nor = geo.attributes.normal;
+      var uv = geo.attributes.uv;
+
+      // 该 mesh 的材质颜色 -> 顶点色
+      var col = mesh.material && mesh.material.color
+        ? mesh.material.color
+        : new THREE.Color(0xffffff);
+
+      // 若有索引则展开
+      var indices = geo.index ? geo.index.array : null;
+      var count = indices ? indices.length : pos.count;
+
+      for (var k = 0; k < count; k++) {
+        var idx = indices ? indices[k] : k;
+        v.fromBufferAttribute(pos, idx).applyMatrix4(m);
+        positions.push(v.x, v.y, v.z);
+
+        if (nor) {
+          n.fromBufferAttribute(nor, idx).applyMatrix3(nm).normalize();
+          normals.push(n.x, n.y, n.z);
+        } else {
+          normals.push(0, 1, 0);
+        }
+
+        // 顶点色 = 材质色（合并后靠它区分颜色）
+        colors.push(col.r, col.g, col.b);
+
+        if (uv) {
+          uvs.push(uv.getX(idx), uv.getY(idx));
+        } else {
+          uvs.push(0, 0);
+        }
+      }
+    }
+
+    if (!positions.length) return null;
+
+    var out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    out.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    out.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    out.computeBoundingSphere();
+    return out;
+  };
+
+  /**
+   * 按材质分组合并：把 group 里所有 mesh 按「材质」分桶，每桶合并成一个 mesh。
+   *
+   * 与 flattenGroup 的区别：flattenGroup 把所有部件合并成一个顶点色 mesh，
+   * 会丢失贴图。这个版本保留每个材质自己的贴图，只是把同材质的部件合并，
+   * 所以 4 个材质 = 4 个 draw call 而不是 20 个。
+   *
+   * 适用于樱花树（bark 躯干 + blossom 花冠）这类多材质但部件重复的物件。
+   *
+   * @param {THREE.Group} group
+   * @returns {number} 合并后的 mesh 数（-1 表示未合并）
+   */
+  W.flattenGroupByMaterial = function (group) {
+    group.updateMatrixWorld(true);
+
+    // 按材质 UUID 分桶
+    var buckets = {};
+    var toRemove = [];
+    group.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || o.isInstancedMesh) return;
+      var key = o.material && o.material.uuid ? o.material.uuid : 'default';
+      if (!buckets[key]) buckets[key] = { mat: o.material, meshes: [] };
+      buckets[key].meshes.push(o);
+    });
+
+    // 每个桶至少 2 个 mesh 才值得合并
+    var mergedCount = 0;
+    var invRoot = new THREE.Matrix4().copy(group.matrixWorld).invert();
+
+    for (var key in buckets) {
+      var bucket = buckets[key];
+      if (bucket.meshes.length < 2) continue;
+
+      var geo = W.mergeMeshesKeepUV(bucket.meshes, invRoot);
+      if (!geo) continue;
+
+      // 【关键】必须用**材质副本**，不能直接用 bucket.mat。
+      //
+      // 踩过的坑：直接复用 bucket.mat 会导致未参与合并的 mesh 变黑。
+      // 原因：合并后的几何体一定带 color 属性，而 bakeContactAO 里
+      // `if (geo.attributes.color) return` 会跳过它；但同材质下
+      // **没有 color 属性的其它 mesh**（如塔基座）就被 vertexColors: true
+      // 渲染成纯黑了。五重塔基座变黑砖正是这个原因。
+      //
+      // 用 clone 后：合并体有自己的材质实例，不影响任何其它 mesh。
+      var mergedMat = bucket.mat.clone();
+      delete mergedMat.userData.coloredShade;   // clone 会带过来，清掉避免重复编译
+      mergedMat.needsUpdate = true;
+
+      var m = new THREE.Mesh(geo, mergedMat);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      group.add(m);
+      mergedCount++;
+
+      for (var i = 0; i < bucket.meshes.length; i++) toRemove.push(bucket.meshes[i]);
+    }
+
+    for (var r = 0; r < toRemove.length; r++) {
+      if (toRemove[r].parent) toRemove[r].parent.remove(toRemove[r]);
+    }
+
+    return mergedCount > 0 ? mergedCount : -1;
+  };
+
+  /**
+   * 合并 mesh 但保留 UV（供带贴图的材质使用）。
+   * 与 mergeMeshes 的差别：颜色走材质本身，但仍需写顶点色。
+   *
+   * 【踩过的坑：合并后物体变纯黑】
+   * 初版这里只写了 position/normal/uv，没写 color。
+   * 但材质可能因 bakeContactAO 被设成 vertexColors: true，
+   * 而几何体缺 color 属性 -> three.js 把顶点色当 (0,0,0) -> 整个物体纯黑。
+   * 五重塔基座就是这样变成一块黑砖的（截图确认）。
+   * 修法：始终写入顶点色，且与材质 color 保持一致（默认白色）。
+   */
+  W.mergeMeshesKeepUV = function (meshes, invRoot) {
+    if (!meshes.length) return null;
+    var positions = [], normals = [], uvs = [], colors = [];
+    var m = new THREE.Matrix4();
+    var v = new THREE.Vector3();
+    var n = new THREE.Vector3();
+    var nm = new THREE.Matrix3();
+
+    for (var i = 0; i < meshes.length; i++) {
+      var mesh = meshes[i];
+      var geo = mesh.geometry;
+      if (!geo || !geo.attributes || !geo.attributes.position) continue;
+      mesh.updateMatrixWorld(true);
+      m.copy(invRoot).multiply(mesh.matrixWorld);
+      nm.getNormalMatrix(m);
+
+      var pos = geo.attributes.position;
+      var nor = geo.attributes.normal;
+      var uv = geo.attributes.uv;
+      var vcol = geo.attributes.color;    // 可能已有顶点色（AO 烘焙过的）
+
+      // 该部件自身的颜色基准：优先用几何体顶点色，其次材质色
+      var matCol = mesh.material && mesh.material.color
+        ? mesh.material.color
+        : new THREE.Color(0xffffff);
+
+      var indices = geo.index ? geo.index.array : null;
+      var count = indices ? indices.length : pos.count;
+
+      for (var k = 0; k < count; k++) {
+        var idx = indices ? indices[k] : k;
+        v.fromBufferAttribute(pos, idx).applyMatrix4(m);
+        positions.push(v.x, v.y, v.z);
+
+        if (nor) {
+          n.fromBufferAttribute(nor, idx).applyMatrix3(nm).normalize();
+          normals.push(n.x, n.y, n.z);
+        } else {
+          normals.push(0, 1, 0);
+        }
+
+        if (uv) uvs.push(uv.getX(idx), uv.getY(idx));
+        else uvs.push(0, 0);
+
+        // 顶点色：有则沿用（保留 AO / 互色差异），无则用材质色
+        if (vcol) {
+          colors.push(vcol.getX(idx), vcol.getY(idx), vcol.getZ(idx));
+        } else {
+          colors.push(matCol.r, matCol.g, matCol.b);
+        }
+      }
+    }
+
+    if (!positions.length) return null;
+    var out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    out.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    out.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    out.computeBoundingSphere();
+    return out;
+  };
+
+  W.flattenGroup = function (group, opt) {
+    opt = opt || {};
+    var meshes = [];
+    group.traverse(function (o) {
+      if (o.isMesh && o.geometry && !o.isInstancedMesh) meshes.push(o);
+    });
+
+    var merged = W.mergeMeshes(meshes, group);
+    if (!merged) return null;
+
+    // 统一材质：白色基础色 + 顶点色
+    var mat = G.celMaterial('#FFFFFF', {
+      steps: opt.steps != null ? opt.steps : 3,
+      darkness: opt.darkness != null ? opt.darkness : 0.86,
+      vertexColors: true
+    });
+
+    var out = new THREE.Mesh(merged, mat);
+    out.castShadow = true;
+    out.receiveShadow = true;
+    return out;
+  };
+
   //
   // 踩过的坑（第一版很糟）：竹竿用 CylinderGeometry(r, r*1.15, h, 5) 深绿 5 面体，
   // 在阴影里渲染成近乎纯黑的细竖条，完全读不出"竹子"；叶子是零散的深色小片飘在
@@ -3341,7 +3621,25 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       g.add(crown);
     }
 
-    g.userData.stalks = stalks;
+    // 【性能改造】把整丛竹子合并。
+    //
+    // 改造前：每根竹竿 = 1竿 + 3~4节 + 2~3簇×3叶 + 1冠 ≈ 15 个独立 mesh。
+    // 4 处竹林一共 433 个 mesh，占全场 draw calls 的 40%（实测）。
+    // 合并后每丛 1 个 mesh，draw call 从 433 降到 4。
+    //
+    // 【踩过的坑】一开始用 flattenGroup（把所有材质烘成顶点色），
+    // 结果竹子变成灰白色 —— 因为竹竿用的是 bambooSkin **贴图**，
+    // 而合并后材质是纯白 + 顶点色，贴图丢了，顶点色又是贴图材质的
+    // color（白色），所以整丛发灰。
+    // 正确做法：flattenGroupByMaterial —— 按材质分桶合并，保留各自贴图。
+    // 竹竿（bambooSkin）1 桶 + 竹节/叶/冠的纯色各 1 桶，共约 4~5 桶。
+    var merged = W.flattenGroupByMaterial(g);
+    if (merged > 0) {
+      g.userData.merged = true;
+      g.userData.swingPhase = rnd() * 6.28;
+    } else {
+      g.userData.stalks = stalks;   // 合并失败则回退到逐根摆动
+    }
     return g;
   };
 
@@ -3706,6 +4004,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
 
     g.userData.height = y;
+
+    // 【性能】五重塔是全场最重的单个物件：5 层 × (身+2檐+4檐角+窗) + 基座 + 相轮 + 4环
+    // ≈ 38 个 mesh，两座塔就是 76 mesh。
+    // 按材质合并后：塔身1 + 檐1 + 窗1 + 基座2 + 金环1 ≈ 6 个。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -3788,6 +4092,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     pl.position.y = 1.61 * s;
     g.add(pl);
     g.userData.light = pl;
+
+    // 【性能】石灯笼 ~12 个 mesh × 8 座 = 96 mesh。
+    // 按材质合并后：石色 3 档 + 发光窗 1 个 = 4 个，从 96 降到 32。
+    // 注意 PointLight 不是 Mesh，不会被合并掉。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -6308,76 +6618,158 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 </script>
 <!-- ==== src/51-terrain.js ==== -->
 <script>
-/* 51-terrain.js — 地形高度场
+/* 51-terrain.js — 地形高度场（多区域版 v2）
  *
- * 设计原则（很重要）：
- *  1) 高度必须是一个**纯函数** h(x,z)，任何模块随时可查，不需要查询网格。
- *  2) 城镇区域保持绝对平坦（h=0）——城镇是安全区，台阶/坡度会让 NPC 和
- *     建筑对位变得脆弱，且视觉上城镇平整更像"人工聚落"。
- *  3) 野外用几个"地形骨架"叠加：缓坡 + 溪谷下切 + 远处高地。
- *  4) 高度函数必须是**连续可导**的（smoothstep 过渡），否则实体会在
- *     硬边处"跳"一格。
+ * 【v1 的失败教训，值得留着】
+ * 第一版我用"多区域权重混合"：每个区域算出自己的高度，再按距离权重加权平均。
+ * 实测交界处出现 17~18 单位的高度断层（相当于一堵悬崖），原因有三：
+ *   1) 相邻区域的高度基线差太多（平野 z=70 处高 10.2，码头只有 1.8），
+ *      加权平均在两个区域都占 30% 的位置会得到 ~5，但一旦权重偏向某边就跳到 1.8 或 10.2
+ *   2) 区域权重都趋近 0 的"空隙"里归一化除极小数，数值爆炸
+ *   3) 椭圆区域之间必然有空隙，空隙处无定义
+ *
+ * v2 的策略彻底换掉了：
+ *   **先定义一个连续的全局基础地形，再把局部特征（山、海、溪）作为"可加/可限制"的修饰叠加。**
+ *   这样任何位置都有明确定义，且天然连续——因为基础地形本身就是平滑函数。
+ *
+ * 具体做法：
+ *   base(x,z) = 从南到北的整体地势（城镇处刚好为 0）
+ *   然后：
+ *     - 神山：在基础之上**加上**一个高斯状的山体隆起（永远只会往上堆，不会和别处打架）
+ *     - 海岸：在基础之上**减去**一个朝东倾斜的量，并 clamp 到海平面以下
+ *     - 溪谷：局部下切
+ *   最后整平城镇。
+ *   全是"加法/乘法"，没有除法归一化，所以不会爆。
  */
 (function (G) {
   'use strict';
 
   var T = G.terrain = {};
 
-  // 城镇范围（沿用 DATA.TOWN 的边界，向内收 2 单位作为过渡带）
-  var TOWN_PAD = 2.5;
+  // =====================================================================
+  // 区域参数（供刷怪/地名/物件摆放查询用）
+  // =====================================================================
+  var REGIONS = {
+    town:     { cx: 0,    cz: 0,    rx: 34,  rz: 26 },
+    field:    { cx: 0,    cz: 40,   rx: 48,  rz: 40 },
+    // 山的中心要在峰顶，rz 要够大让山脚平缓延伸到 z=90 左右。
+    // 【踩过的坑】原来 cz=150, rz=56，山体在 z=206 处才归零，
+    // 但玩家走到 z=170 时 hillTop 已经掉了 40%（从 41 降到 24），
+    // 看起来像"爬过山顶又下山"，实际是椭圆边界截断。
+    // 现在 cz=140, rz=72：峰顶在 z=140，山脚延伸到 z=212。
+    mountain: { cx: 0,    cz: 140,  rx: 66,  rz: 72 },
+    // 海岸区域要覆盖到"海里"
+    harbor:   { cx: 120,  cz: 62,   rx: 42,  rz: 34 },
+    beach:    { cx: 150,  cz: 130,  rx: 78,  rz: 66 }
+  };
+  T.REGIONS = REGIONS;
 
-  /**
-   * 城镇权重 0..1。
-   * 城镇内 = 1（完全平整），过渡带内平滑衰减到 0。
-   */
-  function townWeight(x, z) {
-    var D = G.DATA.TOWN;
-    // 到城镇矩形边界的有符号距离（内部为正）
-    var dx = Math.min(x - D.minX, D.maxX - x);
-    var dz = Math.min(z - D.minZ, D.maxZ - z);
-    var d = Math.min(dx, dz);
-    if (d <= 0) return 0;                       // 城外
-    if (d >= TOWN_PAD) return 1;                // 城内深处
-    return G.M.smoothstep(d / TOWN_PAD);        // 过渡带
+  var TOWN_PAD = 6;
+
+  function normDist(r, x, z) {
+    var dx = (x - r.cx) / r.rx;
+    var dz = (z - r.cz) / r.rz;
+    return Math.sqrt(dx * dx + dz * dz);
   }
 
-  /**
-   * 野外基础起伏：从城镇边界往北缓升，配合两道横向的"坡坎"。
-   */
-  function fieldHeight(x, z) {
-    // 北高南低：越往副本方向越高
-    var rise = G.M.clamp01((z - 12) / 54) * 6.2;
-
-    // 第一道坡坎：z≈26，缓坡
-    var step1 = G.M.smoothstep((z - 22) / 8) * 1.5;
-
-    // 第二道坡坎：z≈48，更陡
-    var step2 = G.M.smoothstep((z - 44) / 7) * 2.4;
-
-    // 东西两侧略微抬升（盆地感，中间是走道）
-    var bowl = Math.pow(Math.abs(x) / 34, 2.2) * 2.8;
-
-    // 细微噪声（用两个不同频率的正弦代替，避免引入额外随机性）
-    var wobble = Math.sin(x * 0.21) * Math.cos(z * 0.17) * 0.35
-               + Math.sin(x * 0.53 + 1.7) * 0.12;
-
-    return rise + step1 + step2 + bowl + wobble;
+  /** 高斯状隆起：中心 1，边缘平滑到 0（不会突变） */
+  function bump(x, z, r, power) {
+    var d = normDist(r, x, z);
+    if (d >= 1) return 0;
+    var t = 1 - d;
+    return Math.pow(t, power || 2);
   }
 
-  /**
-   * 溪谷下切：沿 x≈-22 的一条南北向沟。
-   * 用平滑的谷形（不是 V 字），并让水面高度跟随。
-   */
+  // =====================================================================
+  // 1) 全局基础地形：从南到北的整体地势
+  //
+  // 要求：连续、无除法、城镇处为 0。
+  // 用 smoothstep 拼接几段高度，段与段之间用 smoothstep 过渡，不会有台阶。
+  // =====================================================================
+  function baseHeight(x, z) {
+    // 南北向的整体抬升：z=0 时 0，z=60 时约 6，z=110 时约 9
+    var north = G.M.smoothstep(G.M.clamp01(z / 110)) * 9.0;
+
+    // 东西向的轻微盆地（中间是走道，两侧略高）
+    var bowl = Math.pow(Math.abs(x) / 60, 2) * 2.2;
+
+    // 细节噪声（两个频率，幅度小）
+    var wobble = Math.sin(x * 0.13) * Math.cos(z * 0.11) * 0.35
+               + Math.sin(x * 0.41 + 1.3) * 0.14;
+
+    return north + bowl + wobble;
+  }
+
+  // =====================================================================
+  // 2) 神山：叠加式隆起（只会往上加，永远不冲突）
+  // =====================================================================
+  function mountainAdd(x, z) {
+    var r = REGIONS.mountain;
+
+    // 主山体：中心高 34，用较高次幂让山脚缓、山顶尖
+    var core = bump(x, z, r, 1.8) * 34;
+
+    // 三道山脊台阶（让山体有层次，不是光滑馒头）
+    // 用 sin 制造环状的"等高线台阶"，再乘以权重让它只在山体范围内生效
+    var ridgeMask = bump(x, z, r, 2.5);
+    var ridge = Math.sin(normDist(r, x, z) * Math.PI * 6) * 1.6 * ridgeMask;
+
+    // 山道：x≈0 处地势略平（可走），用减法降低
+    var pathMask = G.M.smoothstep(Math.abs(x) / 12) * bump(x, z, r, 2.0);
+    var path = pathMask * 3.0;
+
+    return core + ridge + path;
+  }
+
+  // =====================================================================
+  // 3) 海岸：把海滨区域整体压平成"低平台地 + 入海缓坡"
+  //
+  // 【v2 第一次修正】原来只用 -eastDrop 做减法，但 baseHeight 的 north 项
+  // 在 z=74 处已经贡献了 6 单位、z=140 处 9 单位，减法抵不过，
+  // 结果码头 h=13.8、沙滩海边 h=21.5（本该在水下）。
+  // 正确做法：沿海区域不是"减法"，而是"把高度**替换**成海岸剖面"，
+  // 用 weight 在原高度与海岸剖面之间插值。
+  // =====================================================================
+  function coastProfile(x, z) {
+    var r = REGIONS.beach;
+    var rh = REGIONS.harbor;
+
+    var wBeach = bump(x, z, r, 1.0);
+    var wHarbor = bump(x, z, rh, 1.0);
+    var w = Math.max(wBeach, wHarbor);
+    if (w <= 0) return { h: null, w: 0 };
+
+    // 海岸剖面：西高东低
+    //   x < 88   -> +2.4（内陆台地，接平野）
+    //   x = 118  ->  0  （海岸线，潮间带）
+    //   x > 150  -> -2.4（海床）
+    var t = G.M.clamp01((x - 88) / 62);
+    var h = G.M.lerp(2.4, -2.4, t);
+
+    // 沙滩细节：沙丘与潮痕
+    var dune = Math.sin(z * 0.19 + 0.7) * 0.28 + Math.sin(x * 0.23) * 0.18;
+    h += dune * 0.5;
+
+    // 码头区域保持更平整（要放建筑与码头栈桥）
+    if (wHarbor > wBeach) {
+      h = G.M.lerp(h, 1.6, wHarbor * 0.85);
+    }
+
+    return { h: h, w: w };
+  }
+
+  // =====================================================================
+  // 4) 溪谷（保留原逻辑，只在平野区域生效）
+  // =====================================================================
   var RIVER = { centerX: -22, halfWidth: 3.6, depth: 2.2, zMin: 14, zMax: 56 };
+  T.river = RIVER;
 
   function riverCarve(x, z) {
     if (z < RIVER.zMin || z > RIVER.zMax) return 0;
     var dx = Math.abs(x - RIVER.centerX);
     if (dx > RIVER.halfWidth) return 0;
-    // 谷形：中心最深，边缘平滑到 0
     var t = 1 - dx / RIVER.halfWidth;
     var shape = G.M.smoothstep(t);
-    // 南北两端淡出
     var zFade = Math.min(
       G.M.smoothstep((z - RIVER.zMin) / 3),
       G.M.smoothstep((RIVER.zMax - z) / 3)
@@ -6385,45 +6777,92 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     return -RIVER.depth * shape * zFade;
   }
 
-  /**
-   * 主高度函数。
-   * @returns {number} 世界 y（地面表面）
-   */
+  // =====================================================================
+  // 城镇整平权重
+  // =====================================================================
+  function townWeight(x, z) {
+    // 城镇用矩形（和 zones.js 的 TOWN 对齐），外扩 TOWN_PAD 做过渡
+    var D = G.DATA.TOWN;
+    var dx = Math.min(x - D.minX, D.maxX - x);
+    var dz = Math.min(z - D.minZ, D.maxZ - z);
+    var d = Math.min(dx, dz);
+    if (d <= 0) return 0;
+    if (d >= TOWN_PAD) return 1;
+    return G.M.smoothstep(d / TOWN_PAD);
+  }
+
+  // =====================================================================
+  // 主高度函数：全部是加法/乘法，无除法归一化
+  // =====================================================================
   T.height = function (x, z) {
+    var base = baseHeight(x, z);
+    var h = base;
+
+    // 山：往上堆
+    h += mountainAdd(x, z);
+
+    // 海岸：用"剖面替换"而不是减法（详见 coastProfile 的注释）
+    //
+    // 【踩过的坑：海滩路上有 10 单位断层】
+    // 原来用 smoothstep(w * 1.6) 做插值权重。w=0.4 时权重只有 0.36，
+    // 于是内陆高值（10.9）与海岸剖面（0.9）之间还有一个"半高"的中间态，
+    // 但相邻采样点 w 变化快，导致 20 单位距离内高度从 10.9 掉到 0.94。
+    // 修法：把 w 先做一次 smoothstep 拉伸，让"快速衰减带"变宽，
+    // 同时用 w 本身的平方根让小权重也产生足够的替换力。
+    var coast = coastProfile(x, z);
+    if (coast.w > 0 && coast.h !== null) {
+      var cw = Math.sqrt(G.M.clamp01(coast.w));          // 小权重也能拉动
+      cw = G.M.smoothstep(G.M.clamp01(cw * 1.3));        // 再平滑一次
+      h = G.M.lerp(h, coast.h, cw);
+    }
+
+    // 溪谷：局部下切
+    h += riverCarve(x, z);
+
+    // 城镇整平：向 0 插值
     var tw = townWeight(x, z);
-    // 城镇内强制 0；过渡带内插值
-    var field = fieldHeight(x, z) + riverCarve(x, z);
-    return field * (1 - tw);
+    if (tw > 0) {
+      h = h * (1 - tw);
+    }
+
+    return h;
   };
 
-  /** 地面法线（用于让物体贴合坡面，目前只用于立绘的轻微倾斜） */
+  /** 坡度（有限差分） */
   T.slope = function (x, z) {
     var e = 0.5;
     var hl = T.height(x - e, z), hr = T.height(x + e, z);
     var hd = T.height(x, z - e), hu = T.height(x, z + e);
-    return {
-      dx: (hr - hl) / (2 * e),
-      dz: (hu - hd) / (2 * e)
-    };
+    return { dx: (hr - hl) / (2 * e), dz: (hu - hd) / (2 * e) };
   };
 
-  /** 坡度大小 0..~（0=平地） */
   T.steepness = function (x, z) {
     var s = T.slope(x, z);
     return Math.sqrt(s.dx * s.dx + s.dz * s.dz);
   };
 
-  /** 河流中心线（供水面与碰撞使用） */
-  T.river = RIVER;
+  /** 海平面 */
+  T.seaLevel = function () { return -0.8; };
 
-  /** 水面高度：溪谷中心的固定水位 */
-  T.waterLevel = function () {
-    return -1.15;
+  /** 溪流水位 */
+  T.waterLevel = function () { return -1.15; };
+
+  T.isUnderwater = function (x, z) {
+    var h = T.height(x, z);
+    var r = REGIONS;
+    var atSea = bump(x, z, r.beach, 1.0) > 0.02 || bump(x, z, r.harbor, 1.0) > 0.02;
+    var level = atSea ? T.seaLevel() : T.waterLevel();
+    return h < level;
   };
 
-  /** 判断某点是否在水下（用于减速） */
-  T.isUnderwater = function (x, z) {
-    return T.height(x, z) < T.waterLevel();
+  /** 某点所属区域（取最近的区域中心） */
+  T.regionAt = function (x, z) {
+    var best = 'field', bestD = 1e9;
+    for (var k in REGIONS) {
+      var d = normDist(REGIONS[k], x, z);
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    return best;
   };
 
 })(window.G = window.G || {});
@@ -6547,8 +6986,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     W.fill = fill;
 
     // ---- 地面 ----
-    // 2026-11 改造：原来是两块纯平 BoxGeometry，野外看起来空旷。
-    // 现在按 G.terrain.height(x,z) 生成分段网格，支持坡坎/溪谷/盆地。
+    // 按 G.terrain.height(x,z) 生成分段网格，支持坡坎/溪谷/盆地/山体/海岸。
     // 城镇区域高度恒为 0（terrain 内部用 townWeight 强制），所以城镇仍是平的。
     W.ground = [];
 
@@ -6607,27 +7045,59 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       return m;
     }
 
-    // 城镇地面（土黄，平坦）
+    // ---- 地面 ----
+    // 2026-11 扩建：世界从 68x82 扩到 240x300。
+    // 单张大网格会有 4 万+ 顶点，而且无法视锥剔除（永远整张渲染）。
+    //
+    // 改为**分块生成**：把世界切成 TILE 大小的方块，每块独立 mesh。
+    // 好处：three.js 能对视锥外的块做剔除；顶点数分散也更利于驱动缓存。
+    // 块边界处顶点法线不连续的问题用 computeVertexNormals 逐块计算，
+    // 因为地形函数是连续的，高度不会在块边界断裂，只有法线有极轻微差异，
+    // 在 3 阶色阶下看不出来。
+    W.ground = [];
+
+    var TILE = 60;   // 每块 60x60 世界单位
+    var WORLD = G.DATA.WORLD;
+    var TOWN = G.DATA.TOWN;
+
+    // 城镇单独一块（土色，平坦），范围略大于 TOWN 以便衔接
     var townMesh = buildGroundMesh({
-      minX: -20, maxX: 20, minZ: -14, maxZ: 14,
-      segX: 20, segZ: 14,
-      color: '#C9A87C', repeat: 8, seed: 3
+      minX: TOWN.minX - 6, maxX: TOWN.maxX + 6,
+      minZ: TOWN.minZ - 6, maxZ: TOWN.maxZ + 6,
+      segX: 40, segZ: 32,
+      color: '#C9A87C', repeat: 10, seed: 3
     });
     scene.add(townMesh);
     W.ground.push(townMesh);
 
-    // 野外地面（草地，有起伏）
-    // 范围必须比 WORLD 边界大很多：等距正交相机在 45° 下看到的范围
-    // 远超逻辑边界（视口高 24、宽约 43，加上俯角投影拉长），
-    // 网格小了就会在画面边缘露出天空（踩过）。
-    // 这里给到 ±90 / z∈[-50,130]，远超玩家可达范围。
-    var fieldMesh = buildGroundMesh({
-      minX: -90, maxX: 90, minZ: -12, maxZ: 130,
-      segX: 120, segZ: 96,
-      color: G.PALETTE.grass, repeat: 26, seed: 9
-    });
-    scene.add(fieldMesh);
-    W.ground.push(fieldMesh);
+    // 野外：按块铺满整个世界范围（含边缘余量，避免看到天空）
+    var PAD = 40;   // 世界边界外再铺一圈，防止相机看到边缘
+    var x0 = WORLD.minX - PAD, x1 = WORLD.maxX + PAD;
+    var z0 = WORLD.minZ - PAD, z1 = WORLD.maxZ + PAD;
+
+    var tileCount = 0;
+    for (var tx = x0; tx < x1; tx += TILE) {
+      for (var tz = z0; tz < z1; tz += TILE) {
+        var mx0 = tx, mx1 = Math.min(tx + TILE, x1);
+        var mz0 = tz, mz1 = Math.min(tz + TILE, z1);
+        // 跳过完全落在城镇范围内的块（已被 townMesh 覆盖，避免 z-fighting）
+        if (mx1 <= TOWN.maxX + 6 && mx0 >= TOWN.minX - 6 &&
+            mz1 <= TOWN.maxZ + 6 && mz0 >= TOWN.minZ - 6) continue;
+
+        // 每块 24x24 段，即 2.5 单位一格，足够表现地形起伏
+        var seg = 24;
+        var mesh = buildGroundMesh({
+          minX: mx0, maxX: mx1, minZ: mz0, maxZ: mz1,
+          segX: seg, segZ: seg,
+          color: G.PALETTE.grass,
+          repeat: 8, seed: 9 + tileCount
+        });
+        scene.add(mesh);
+        W.ground.push(mesh);
+        tileCount++;
+      }
+    }
+    W.groundTileCount = tileCount;
 
     // 世界边界（不可见的围栏）——用碰撞体实现，不画几何
 
@@ -7021,9 +7491,20 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       }
       geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-      if (node.material && !node.material.vertexColors) {
-        node.material.vertexColors = true;
-        node.material.needsUpdate = true;
+      // 【关键】必须给这个 mesh 一个**独立的材质副本**。
+      //
+      // 踩过的坑：material 是全局缓存共享的（art 里的 mat()/texMat() 按颜色缓存）。
+      // 直接 node.material.vertexColors = true 会污染所有使用同一材质的 mesh，
+      // 包括那些**没有 color 属性**的 mesh —— 它们会被渲染成纯黑。
+      // 实例：五重塔基座用石色 #c8c3b8，与房屋/石灯笼共用同一材质；
+      //       后者走 AO 把共享材质标成 vertexColors:true，塔基座就变成黑砖。
+      // 修法：clone 一份专属材质再标记，互不影响。
+      var srcMat = node.material;
+      if (srcMat && !srcMat.vertexColors) {
+        var aoMat = srcMat.clone();
+        aoMat.vertexColors = true;
+        aoMat.needsUpdate = true;
+        node.material = aoMat;
       }
     });
   };

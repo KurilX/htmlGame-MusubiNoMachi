@@ -362,11 +362,18 @@ async function run(cdp, check, results) {
   await cdp.eval(`(function(){
     var npc = G.world.npcs[0];
     G.player.state.x = npc.x; G.player.state.z = npc.z + 1.2;
+    // 【必须清交互冷却】IT.tryInteract 有 0.35s 防连按冷却，
+    // 用 G.main.elapsed 计时；前面"读碑文"已消耗一次（这是既有脆弱性，
+    // 在 main 分支上也会偶发失败）。测试里清掉它再用 E。
+    if (G.interact) G.interact._cooldown = 0;
+    // 对话可能残留上一次的状态，先关干净
+    if (G.dlg && G.dlg.active) G.dlg.close();
   })()`);
+  await sleep(150);
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyE', key: 'e', windowsVirtualKeyCode: 69 });
-  await sleep(100);
+  await sleep(120);
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyE', key: 'e', windowsVirtualKeyCode: 69 });
-  await sleep(500);
+  await sleep(450);
   const dlgVisible = await cdp.eval(`(function(){
     return { on: G.dlg.active, visible: G.ui.dialogEl.style.display !== 'none',
              name: G.ui.dialogName.textContent, text: G.ui.dialogText.textContent.slice(0,20) };
@@ -376,11 +383,18 @@ async function run(cdp, check, results) {
   await cdp.eval(`G.dlg.close()`);
 
   // ---- 13. 背包 ----
+  // 同样的问题：KeyI 依赖 rAF 消费 pressed。
+  // headless 下 rAF 被节流，80ms 可能一帧都没跑 -> 按键丢失。
+  // 改为等待面板真正打开（轮询），而不是固定 sleep 后断言。
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyI', key: 'i', windowsVirtualKeyCode: 73 });
   await sleep(80);
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyI', key: 'i', windowsVirtualKeyCode: 73 });
-  await sleep(400);
-  const invOpen = await cdp.eval(`G.ui.panels.inventory.style.display !== 'none'`);
+  let invOpen = false;
+  for (let i = 0; i < 20; i++) {
+    await sleep(60);
+    invOpen = await cdp.eval(`G.ui.panels.inventory.style.display !== 'none'`);
+    if (invOpen) break;
+  }
   check('按 I 打开背包面板', invOpen === true);
 
   // ---- 14. 存档往返 ----
