@@ -1,9 +1,19 @@
 // tools/verify-quest.js — 任务系统验收
 //
 // 覆盖：开局引导 / 任务日志 UI / 五类步骤钩子 / Boss 召唤 / 存档往返 / 多地区结构
+//
+// 目标地址：默认本地 dev.html，也可传参测线上：
+//   node tools/verify-quest.js https://kurilx.github.io/htmlGame-MusubiNoMachi/game.html
+//
+// 【同一个错误犯了第三次】verify-aim / verify-perf / verify-quest 都曾把
+// URL 写死成 dev.html，传参被静默忽略，把本地结果当成线上验收。
+// 所以：所有验收脚本必须从 argv[2] 读 URL，并在开头打印真实加载地址。
 const path = require('path');
 const { launchOwnChrome, sleep } = require('./cdp');
 const ROOT = path.resolve(__dirname, '..');
+
+const TARGET_URL = process.argv[2] ||
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now());
 
 async function main() {
   const results = [];
@@ -12,7 +22,8 @@ async function main() {
     console.log((ok ? '  PASS  ' : '  FAIL  ') + name + (detail != null ? '  [' + detail + ']' : ''));
   }
 
-  console.log('=== 任务系统验收 ===\n');
+  console.log('=== 任务系统验收 ===');
+  console.log('目标地址: ' + TARGET_URL + '\n');
 
   const b = await launchOwnChrome({ width: 1280, height: 720 });
   const cdp = b.cdp;
@@ -24,9 +35,7 @@ async function main() {
     errors.push(e.exceptionDetails.text || 'exception');
   });
 
-  await cdp.send('Page.navigate', {
-    url: 'file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now()
-  });
+  await cdp.send('Page.navigate', { url: TARGET_URL });
   let booted = false;
   for (let i = 0; i < 50; i++) {
     await sleep(500);
