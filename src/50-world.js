@@ -804,6 +804,9 @@
    * 不要直接写字面量（踩过：地形改造后实体半埋进土里）。
    */
   W.groundY = function (x, z) {
+    // 副本内是平地在 y=0，不能用大地图的地形高度
+    // （否则玩家会被"抬"到大地图上同坐标的地形高度，悬空或陷地里）
+    if (W.inDungeon) return 0;
     return G.terrain ? G.terrain.height(x, z) : 0;
   };
 

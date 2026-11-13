@@ -205,6 +205,15 @@
     // 每 0.25 秒检查一次玩家与各"到达点"的距离。
     if (G.quest && G.quest.checkReach) G.quest.checkReach(dt, st);
 
+    // ---- 副本推进 ----
+    if (G.dungeon && G.dungeon.active) {
+      G.dungeon.update(dt, st);
+      // 走进出口传送门就离开
+      if (G.dungeon.atExit(st)) {
+        G.dungeon.leave();
+      }
+    }
+
     // 交互
     if (G.input.pressed.interact) {
       G.interact.tryInteract();
@@ -315,9 +324,24 @@
         G.fx.parryFlash(it.x, it.z, 0);
         break;
 
-      case 'gate':
-        G.ui.toast('（副本将在下一版开放）', 2200);
+      case 'gate': {
+        // 副本入口：按 gateUid 找到对应的副本定义
+        var dgId = null;
+        var allDg = G.DATA.DUNGEONS || {};
+        for (var dk in allDg) {
+          if (allDg[dk].gateUid === it.uid) { dgId = dk; break; }
+        }
+        if (!dgId) {
+          G.ui.toast('（这扇门后面什么也没有）', 2200);
+          break;
+        }
+        if (G.dungeon && G.dungeon.active) {
+          G.ui.toast('你已经在里面了', 1600);
+          break;
+        }
+        if (G.dungeon) G.dungeon.enter(dgId);
         break;
+      }
     }
   };
 

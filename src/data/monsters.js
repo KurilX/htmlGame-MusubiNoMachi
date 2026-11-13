@@ -90,6 +90,51 @@
         { hpBelow: 0.65, move: 'summon' },
         { hpBelow: 0.32, move: 'aoe_slam' }
       ]
+    },
+
+    // ---------- 神山副本 Boss：岩融 ----------
+    //
+    // 设定：神山深处镇压的古岩之灵。体型厚重、动作慢但一击很重，
+    // 战斗节奏是「慢慢逼近 -> 砸地 -> 你躲开 -> 打它的空档」。
+    // 与結びの神（快速连击 + 召唤）形成对比：一个考走位，一个考耐心。
+    iwakaguri: {
+      id: 'iwakaguri', name: '岩融', tier: 'boss',
+      hp: 1200, atk: 38, def: 22, speed: 1.5,
+      radius: 1.5, height: 3.6,
+      aggroRange: 22, attackRange: 3.8, attackCd: 3.0,
+      telegraphSec: 1.3, windup: 0.7,
+      ai: 'boss',
+      exp: 340, goldMin: 90, goldMax: 160,
+      loot: 'loot_boss',
+      look: { kimono: '#8A8070', kimonoSh: '#5A5248', hair: '#4A4438', hairSh: '#2E2A22',
+              obi: '#C8A05A', obiSh: '#9A7A3E', skin: '#9A9080', skinSh: '#7A7062' },
+      phases: [
+        { hpBelow: 1.0, move: 'aoe_slam' },
+        { hpBelow: 0.6, move: 'melee_combo' },
+        { hpBelow: 0.28, move: 'aoe_slam' }
+      ]
+    },
+
+    // ---------- 沙滩副本 Boss：潮の女 ----------
+    //
+    // 设定：被海吞掉的人的记忆聚成的形体。移动快、会召唤水弹，
+    // 残血进入「涨潮」状态。与岩融（慢重）形成对比：一个考反应，一个考耐心。
+    shio_no_onna: {
+      id: 'shio_no_onna', name: '潮の女', tier: 'boss',
+      hp: 1000, atk: 32, def: 14, speed: 3.0,
+      radius: 1.0, height: 2.9,
+      aggroRange: 24, attackRange: 3.0, attackCd: 2.1,
+      telegraphSec: 0.85, windup: 0.4,
+      ai: 'boss',
+      exp: 320, goldMin: 80, goldMax: 150,
+      loot: 'loot_boss',
+      look: { kimono: '#7FB8C8', kimonoSh: '#4A8A9A', hair: '#C8E8F0', hairSh: '#8AB8C8',
+              obi: '#F7C8D8', obiSh: '#D9A0B8', skin: '#E8F4F8', skinSh: '#C0DCE4' },
+      phases: [
+        { hpBelow: 1.0, move: 'summon' },
+        { hpBelow: 0.55, move: 'melee_combo' },
+        { hpBelow: 0.25, move: 'summon' }
+      ]
     }
   };
 

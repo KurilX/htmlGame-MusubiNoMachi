@@ -64,6 +64,24 @@
     C.yawTarget += dir * Math.PI / 4;
   };
 
+  /**
+   * 立刻把相机钉到跟随点，不做插值。
+   * 用于场景切换（进出副本）：否则相机会从旧位置慢慢插值过来，
+   * 玩家会看到一段飞过去的动画，而且过程中射线瞄准也会失准。
+   */
+  C.snap = function () {
+    if (!C.cam) return;
+    var hd = Math.cos(C.pitch) * C.distance;
+    var vd = Math.sin(C.pitch) * C.distance;
+    C.cam.position.set(
+      C.follow.x + Math.sin(C.yaw) * hd,
+      C.follow.y + vd,
+      C.follow.z + Math.cos(C.yaw) * hd
+    );
+    C.cam.lookAt(C.follow.x, C.follow.y, C.follow.z);
+    C.cam.updateMatrixWorld(true);
+  };
+
   C.update = function (dt, followPos) {
     // 平滑朝向目标
     var d = G.M.angleDelta(C.yaw, C.yawTarget);
