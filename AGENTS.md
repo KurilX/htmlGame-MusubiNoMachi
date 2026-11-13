@@ -20,6 +20,7 @@ node tools/verify-aim.js       # 瞄准验收（可传 URL 测线上）
 node tools/verify-quest.js     # 任务系统 19 项
 node tools/verify-perf.js      # 性能 6 项
 node tools/verify-dungeon.js   # 副本系统 23 项
+node tools/verify-questlines.js # 地区主线 17 项
 node tools/shot-natural.js <x> <z> out.png   # 用游戏相机截图
 ```
 
@@ -70,10 +71,10 @@ tools/              CDP 验收与截图脚本
 **已完成**：战斗手感、5.5 头身角色、彩色阴影、程序化材质、多区域地形、
 280×270 单张连续大世界（5 个可玩地区）、性能优化（draw calls 1481→883）、
 **任务系统（結ノ町主线 6 章 + 3 条支线 + 新手引导 + 任务日志 UI）**、
-**副本系统（独立场景切换 + 3 副本 + 2 个新 Boss）**。
+**副本系统（独立场景切换 + 3 副本 + 2 个新 Boss）**、
+**4 条地区主线（結ノ町6章 / 神山5章 / 湊町5章 / 渚5章，共 21 章）**。
 
 **未完成**：
-- 神山 / 湊町 / 渚 各自的主线（结构已就绪，只需加数据 + 在 `QUEST_LINES` 注册）。
 - 城镇扩大、NPC 扩到 12~14、支线扩到 8~12 条。
 - 副本内可以补机关、宝箱、中途存档点。
 - `docs/ISSUE-blue-region.md` 记录的蓝色区域视觉缺陷。
@@ -89,6 +90,11 @@ tools/              CDP 验收与截图脚本
   `talk` / `kill`（count）/ `boss` / `knot` / `collect`（count）/ `reach`
 - `reach` 靠 `Q.checkReach(dt, player)` 轮询判定（此前 `onReach` 没有任何调用点，是个 bug）
 - 任务状态由 `80-save.js` 的 `quest` 字段存盘（此前完全没存，读档会清零）
+- `reach` 的目标可以是任意可交互物（gate / stele / chest…），不只是副本入口
+  （早期实现只查 kind===gate，导致碑文类 reach 永远完成不了）
+- `QUEST_LINES[region].giver` 是发布者 NPC id；
+  `Q.tickRegion()` 会在玩家首次进入该地区时提示去找谁
+- **NPC 数量不要写死**：目前 7 个（結ノ町 4 + 三个地区各 1），会随地区扩展增长
 
 ## 副本系统约定（加新副本时看这里）
 
