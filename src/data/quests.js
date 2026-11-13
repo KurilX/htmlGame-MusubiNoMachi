@@ -144,7 +144,10 @@
       brief: '铁次说，能带回 2 份精铁，就免费帮你打一件东西。',
       hint: '精铁在竹林里的矿点。',
       steps: [
-        { type: 'collect', target: 'mat_iron', count: 2, text: '收集精铁' }
+        // 【修正】原来写的是 mat_iron，但游戏里没有这个物品 id
+        // （实际物品是 mat_ember / mat_shell / mat_feather / mat_horn / mat_veil）。
+        // 这个 collect 步骤永远无法完成。改用竹林矿点会掉的东西。
+        { type: 'collect', target: 'mat_horn', count: 2, text: '收集精铁' }
       ],
       rewards: { exp: 90, gold: 120 },
       nextId: null
@@ -161,6 +164,131 @@
         { type: 'reach', target: 'gate_dungeon', text: '确认社前的路' }
       ],
       rewards: { exp: 60, gold: 80 },
+      nextId: null
+    },
+
+    // =====================================================================
+    // 城镇扩建追加的支线（7 条）
+    //
+    // 设计原则：
+    //   - 每条都有具体的小事由头（不玩"去杀 N 只"的公式）
+    //   - 步骤尽量用不同组合：collect / kill / reach / talk
+    //   - 奖励随难度递增，但不抢主线风头
+    // =====================================================================
+
+    // ---- いと：市集鱼屋（查鱼的来路）----
+    side_ito_01: {
+      id: 'side_ito_01',
+      region: 'town', chapter: 0,
+      title: '鲜度可疑的鱼',
+      giver: 'npc_ito',
+      brief: 'いと收到的鱼不太对劲。去竹林溪边看看是谁在送这种货。',
+      hint: '竹林在霞ヶ原中段。溪边有水的地方。',
+      steps: [
+        { type: 'kill', target: 'kappa', count: 3, text: '赶走溪边抢鱼的河童' },
+        { type: 'talk', target: 'npc_ito', text: '回去告诉いと' }
+      ],
+      rewards: { exp: 110, gold: 90 },
+      nextId: null
+    },
+
+    // ---- 三郎：行商（清山道）----
+    side_saburo_01: {
+      id: 'side_saburo_01',
+      region: 'town', chapter: 0,
+      title: '被堵的山道',
+      giver: 'npc_saburo',
+      brief: '三郎的货押了全部本钱。山道被天狗占了，他走不了。',
+      hint: '山门在霞ヶ原北端，从那里往上走。',
+      steps: [
+        { type: 'kill', target: 'tengu', count: 4, text: '清掉山道上的天狗' },
+        { type: 'talk', target: 'npc_saburo', text: '告诉三郎路通了' }
+      ],
+      rewards: { exp: 140, gold: 130 },
+      nextId: null
+    },
+
+    // ---- 倉吉：蔵番（夜里的声响）----
+    side_kura_01: {
+      id: 'side_kura_01',
+      region: 'town', chapter: 0,
+      title: '仓库里的响动',
+      giver: 'npc_kura',
+      brief: '倉吉守了三十年仓库，头一次听见搬东西的声音，可箱子一个没少。',
+      hint: '夜里的镇子边缘会有东西。先去南边仓库，再往野外围一圈。',
+      steps: [
+        { type: 'kill', target: 'onibi', count: 2, text: '找出夜里的东西' },
+        { type: 'talk', target: 'npc_kura', text: '回去告诉倉吉' }
+      ],
+      rewards: { exp: 120, gold: 100 },
+      nextId: null
+    },
+
+    // ---- 加乃：鍛冶弟子（师父的锤子）----
+    side_kano_01: {
+      id: 'side_kano_01',
+      region: 'town', chapter: 0,
+      title: '师父的锤子',
+      giver: 'npc_kano',
+      brief: '铁次把师父传下来的锤子丢在竹林里了。加乃不敢一个人去找。',
+      hint: '竹林里的采集节点附近，可能有铁器。',
+      steps: [
+        { type: 'reach', target: 'node_ore_1', text: '去竹林里找找' },
+        // 用 mat_horn（小鬼掉的角）代替"锤子"：游戏没有"锤子"这个物品，
+        // 捡一件竹林里能找到的东西作为凭证，对话里再圆回来。
+        { type: 'collect', target: 'mat_horn', count: 1, text: '找回锤子的下落' },
+        { type: 'talk', target: 'npc_kano', text: '把消息带给加乃' }
+      ],
+      rewards: { exp: 130, gold: 110 },
+      nextId: null
+    },
+
+    // ---- 林：町の番人（夜巡）----
+    side_hayashi_01: {
+      id: 'side_hayashi_01',
+      region: 'town', chapter: 0,
+      title: '夜巡',
+      giver: 'npc_hayashi',
+      brief: '林要守门走不开。他让你去镇子西边和北边看一眼，别打，看清楚就行。',
+      hint: '先走到镇子西边的碑文，再往北到鸟居。',
+      steps: [
+        { type: 'reach', target: 'stele_town_2', text: '查看镇子北边' },
+        { type: 'reach', target: 'stele_town_3', text: '查看镇子南边' },
+        { type: 'talk', target: 'npc_hayashi', text: '回去报告林' }
+      ],
+      rewards: { exp: 100, gold: 90 },
+      nextId: null
+    },
+
+    // ---- すず：町の子供（找猫）----
+    side_suzu_01: {
+      id: 'side_suzu_01',
+      region: 'town', chapter: 0,
+      title: 'だんご在哪',
+      giver: 'npc_suzu',
+      brief: 'すず的猫三天没回家了。灰色的，尾巴有一截白的。',
+      hint: '她说猫喜欢竹林边上的草。往霞ヶ原入口那边找。',
+      steps: [
+        { type: 'reach', target: 'stele_field_1', text: '在竹林边找猫' },
+        { type: 'talk', target: 'npc_suzu', text: '告诉すず找到了' }
+      ],
+      rewards: { exp: 90, gold: 70 },
+      nextId: null
+    },
+
+    // ---- 太郎：沖仲仕（卸货确认）----
+    side_taro_01: {
+      id: 'side_taro_01',
+      region: 'town', chapter: 0,
+      title: '灯油的去处',
+      giver: 'npc_taro',
+      brief: '太郎一个人卸不动货，让你去湊町仓库确认放灯油的地方。',
+      hint: '仓库在湊町南侧，栈桥的反方向。',
+      steps: [
+        { type: 'reach', target: 'stele_harbor_1', text: '确认湊町仓库的位置' },
+        { type: 'talk', target: 'npc_taro', text: '回去告诉太郎' }
+      ],
+      rewards: { exp: 120, gold: 120 },
       nextId: null
     },
 

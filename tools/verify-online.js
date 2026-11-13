@@ -101,7 +101,7 @@ async function main() {
   // 用轮询等待 G.world.props 就绪，最多 25 秒；超时才判失败。
   let booted = false;
   const bootStart = Date.now();
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 80; i++) {
     await sleep(500);
     try {
       const ok = await cdp.eval(

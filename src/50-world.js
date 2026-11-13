@@ -344,7 +344,16 @@
         break;
 
       case 'lantern':
-        obj = art.lantern({ poleH: spec.poleH || 2.6 });
+        // light: false 时只保留自发光外观，不创建 PointLight。
+        // 【性能】前向渲染下每个点光源都要在所有受光材质里循环一次，
+        // 且光源数量变化会触发 shader 变体重编译。
+        // 实测城镇点光源 33→43 时，帧率从 ~57fps 掉到 28fps。
+        // 灯笼的观感主要来自 emissive 材质，关掉光源视觉几乎无差别。
+        obj = art.lantern({
+          poleH: spec.poleH || 2.6,
+          light: spec.light,
+          glow: spec.glow
+        });
         W.addCircleCollider(spec.x, spec.z, 0.32);
         break;
 
