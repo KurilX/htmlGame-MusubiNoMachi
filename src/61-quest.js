@@ -270,8 +270,22 @@
 
       reachedOnce[gate.uid] = true;
       Q.onReach(gate.uid);
-      // 到达副本门前时，如果任务要求打 Boss，就在这里召唤
-      Q.maybeSpawnBoss(gate.uid, gate.x, gate.z);
+
+      // 到达副本门前时，如果任务要求打 Boss：
+      //   - 如果这扇门**已经实现了副本**，就不在大地图召唤，
+      //     让玩家按 E 进副本、在 Boss 房里打（副本系统的正路）
+      //   - 如果这扇门还没有副本，退化成"门前召唤"（兼容旧行为）
+      var hasDungeon = false;
+      var allDg = G.DATA.DUNGEONS || {};
+      for (var dk in allDg) {
+        if (allDg[dk].gateUid === gate.uid) { hasDungeon = true; break; }
+      }
+      if (!hasDungeon) {
+        Q.maybeSpawnBoss(gate.uid, gate.x, gate.z);
+      } else {
+        // 提示玩家这里能进
+        G.ui.toast('门后有什么在等着。按 E 进去。', 3000);
+      }
     }
   };
 

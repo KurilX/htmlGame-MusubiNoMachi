@@ -237,18 +237,80 @@
     }
   ];
 
-  // ---------- 副本 ----------
-  G.DATA.DUNGEON = {
-    id: 'wasureo',
-    name: '忘れ緒の社',
-    entry: { x: 0, z: 63 },
-    // 3 房间 + Boss 房，一条直线推进，每间有障碍与怪
-    rooms: [
-      { id: 'r1', name: '拝殿',   x: 0,  z: 0,  w: 14, d: 14, enemies: [{ id: 'onibi', count: 3 }] },
-      { id: 'r2', name: '回廊',   x: 0,  z: -18, w: 12, d: 14, enemies: [{ id: 'yurei', count: 3 }, { id: 'kappa', count: 1 }] },
-      { id: 'r3', name: '本殿前', x: 0,  z: -36, w: 16, d: 14, enemies: [{ id: 'oni_small', count: 2 }, { id: 'tengu', count: 2 }] },
-      { id: 'boss', name: '結び目の間', x: 0, z: -56, w: 20, d: 18, boss: 'musubi_no_kami' }
-    ]
+  // ---------- 副本定义 ----------
+  //
+  // 结构：每个副本是一条直线推进的房间链，清光一间才进下一间，
+  // 最后一间是 Boss 房。玩家走到副本入口的 gate 前按 E 进入。
+  //
+  // room 字段：
+  //   x, z    : 房间中心（副本坐标系从 (0,0) 开始向 -z 延伸）
+  //   w, d    : 宽 / 深
+  //   enemies : [{ id, count }] 普通房间的敌人配置
+  //   boss    : monsterId       Boss 房
+  G.DATA.DUNGEONS = {
+    // ---------- 忘れ緒の社（初始地）----------
+    wasureo: {
+      id: 'wasureo',
+      name: '忘れ緒の社',
+      gateUid: 'gate_dungeon',
+      entry: { x: 0, z: 63 },
+      clearReward: { exp: 120, gold: 80 },
+      rooms: [
+        { id: 'r1', name: '拝殿',   x: 0, z: 0,   w: 14, d: 14,
+          enemies: [{ id: 'onibi', count: 3 }] },
+        { id: 'r2', name: '回廊',   x: 0, z: -18, w: 12, d: 14,
+          enemies: [{ id: 'yurei', count: 3 }, { id: 'kappa', count: 1 }] },
+        { id: 'r3', name: '本殿前', x: 0, z: -36, w: 16, d: 14,
+          enemies: [{ id: 'oni_small', count: 2 }, { id: 'tengu', count: 2 }] },
+        { id: 'boss', name: '結び目の間', x: 0, z: -56, w: 20, d: 18,
+          boss: 'musubi_no_kami' }
+      ]
+    },
+
+    // ---------- 神山：岩融の窟 ----------
+    // 山顶神社后方的石窟，镇着古岩之灵「岩融」。
+    // 敌人：天狗（快）+ 小鬼（硬），Boss 是慢重型（考耐心与走位）
+    iwakaguri: {
+      id: 'iwakaguri',
+      name: '岩融の窟',
+      gateUid: 'gate_mountain',
+      entry: { x: 0, z: 158 },
+      clearReward: { exp: 200, gold: 140 },
+      rooms: [
+        { id: 'm1', name: '窟の入口', x: 0, z: 0,   w: 14, d: 14,
+          enemies: [{ id: 'tengu', count: 2 }, { id: 'onibi', count: 2 }] },
+        { id: 'm2', name: '石の回廊', x: 0, z: -20, w: 12, d: 16,
+          enemies: [{ id: 'oni_small', count: 3 }] },
+        { id: 'm3', name: '深層',     x: 0, z: -42, w: 16, d: 16,
+          enemies: [{ id: 'oni_small', count: 2 }, { id: 'tengu', count: 3 }] },
+        { id: 'boss', name: '岩の間', x: 0, z: -66, w: 22, d: 20,
+          boss: 'iwakaguri' }
+      ]
+    },
+
+    // ---------- 沙滩：潮の淵 ----------
+    // 海边礁石下的空洞，涨潮时被淹没。敌人以河童 + 幽霊为主，
+    // Boss 是快速型（考反应）
+    shio: {
+      id: 'shio',
+      name: '潮の淵',
+      gateUid: 'gate_beach',
+      entry: { x: 150, z: 178 },
+      clearReward: { exp: 190, gold: 130 },
+      rooms: [
+        { id: 's1', name: '潮溜まり', x: 0, z: 0,   w: 16, d: 14,
+          enemies: [{ id: 'kappa', count: 4 }] },
+        { id: 's2', name: '沈んだ道', x: 0, z: -18, w: 14, d: 16,
+          enemies: [{ id: 'yurei', count: 2 }, { id: 'kappa', count: 2 }] },
+        { id: 's3', name: '海鳴りの間', x: 0, z: -40, w: 16, d: 16,
+          enemies: [{ id: 'yurei', count: 3 }, { id: 'onibi', count: 2 }] },
+        { id: 'boss', name: '潮の底', x: 0, z: -64, w: 20, d: 18,
+          boss: 'shio_no_onna' }
+      ]
+    }
   };
+
+  // 兼容旧引用（部分代码读单数形式 G.DATA.DUNGEON）
+  G.DATA.DUNGEON = G.DATA.DUNGEONS.wasureo;
 
 })(window.G = window.G || {});
