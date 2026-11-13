@@ -163,6 +163,12 @@
       g.add(pl);
       g.userData.light = pl;
     }
+
+    // 【性能】一盏灯笼原来有 5 个 mesh（杆/臂/灯体/两个盖）。
+    // 全场 20 盏 = 100 mesh，是城镇视锥内第二多的类型。
+    // flattenGroupByMaterial 只合并 isMesh，不会碰上面的 PointLight。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -731,6 +737,11 @@
       b.scale.y = 0.8;
       g.add(b);
     }
+
+    // 【性能】草丛 2~3 个球，单个不多，但全场 56 个实例（沙滩 + 码头程序化撒的）。
+    // 合并后每丛 1 mesh，总量从 143 降到 56。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 
@@ -751,6 +762,12 @@
     var rail2 = rail.clone();
     rail2.position.y = 0.38;
     g.add(rail2);
+
+    // 【性能】一段篱笆原来有 12~14 个独立 mesh（每根柱子一个）。
+    // 全场 8 段篱笆 = 106 mesh，是城镇视锥内第三多的类型。
+    // 按材质合并后每段只剩约 2 个（深色柱 + 木色横杆）。
+    W.flattenGroupByMaterial(g);
+
     return g;
   };
 

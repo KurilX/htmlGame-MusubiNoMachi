@@ -34,7 +34,7 @@ async function main() {
 
   await cdp.send('Page.navigate', { url: TARGET_URL });
   let booted = false;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 80; i++) {
     await sleep(500);
     try {
       const ok = await cdp.eval(`(typeof G!=='undefined'&&G.world&&G.world.props&&G.world.props.length>0)?1:0`);

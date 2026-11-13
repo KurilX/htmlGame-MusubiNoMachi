@@ -23,7 +23,12 @@
   };
 
   // 城镇范围（安全区，不刷怪）
-  G.DATA.TOWN = { minX: -18, maxX: 18, minZ: -12, maxZ: 12, name: '結ノ町' };
+  //
+  // 【2026-11 扩建】从 36×24 扩到 60×44，容纳更多 NPC 与设施：
+  //   原  X[-18,18] Z[-12,12]
+  //   新  X[-30,30] Z[-22,22]
+  // 地形拉平、地面土砖网格、植被排除都会自动跟随（它们都读 G.DATA.TOWN）。
+  G.DATA.TOWN = { minX: -30, maxX: 30, minZ: -22, maxZ: 22, name: '結ノ町' };
 
   // ---------- 静态场景物件 ----------
   // type: torii|lantern|sakura|house|bamboo|stairs|rock|bush|fence|water|stele|knot|chest|pot|node|shrine|gate
@@ -51,6 +56,86 @@
 
     // ===== 城镇：神社（存档/传送点） =====
     { type: 'shrine', x: 0, z: 8.5, rotY: 0 },
+
+    // ===== 城镇扩建（60×44）：新增街区 =====
+    //
+    // 布局思路：以 z=0 的主街为中轴，向南北两侧展开。
+    //   北侧（z 12~20）：新住宅区 + 市集
+    //   南侧（z -22~-12）：仓库、工坊
+    //   东西两翼（|x| 18~30）：扩展的民居与设施
+    //
+    // 所有坐标都在 TOWN 范围内（X[-30,30] Z[-22,22]），地形恒为 0。
+
+    // ---- 北侧：市集广场 ----
+    { type: 'house', x: -20, z: 16, w: 7, d: 5.5, h: 2.7, rotY: 0.08, noren: '#D9483B' },
+    { type: 'house', x: 20, z: 16, w: 6.5, d: 5.5, h: 2.6, rotY: -0.08, noren: '#7FB8D8' },
+    { type: 'house', x: -8, z: 19, w: 6, d: 5, h: 2.5, rotY: 0.05, noren: '#E8C25A' },
+    { type: 'house', x: 8, z: 19, w: 6, d: 5, h: 2.5, rotY: -0.05, noren: '#9CB87A' },
+    // 市集摊位（用小木箱与桶表示）
+    { type: 'crate', x: -13, z: 13, size: 0.8, seed: 8101 },
+    { type: 'crate', x: -11.5, z: 13.6, size: 0.7, seed: 8102 },
+    { type: 'barrel', x: -14.2, z: 14.2, r: 0.4, h: 0.9, seed: 8103 },
+    { type: 'crate', x: 13, z: 13, size: 0.8, seed: 8104 },
+    { type: 'barrel', x: 14.5, z: 13.8, r: 0.38, h: 0.85, seed: 8105 },
+    // 市集旗帜
+    { type: 'banner', x: -17, z: 12, h: 3.4, color: '#D9483B' },
+    { type: 'banner', x: 17, z: 12, h: 3.2, color: '#7FB8D8' },
+    { type: 'banner', x: 0, z: 21, h: 3.6, color: '#E8C25A' },
+
+    // ---- 南侧：仓库与工坊 ----
+    { type: 'house', x: -18, z: -16, w: 8, d: 6, h: 3.2, rotY: 0.06, noren: '#8A6A4A' },
+    { type: 'house', x: 18, z: -16, w: 7.5, d: 6, h: 3.0, rotY: -0.06, noren: '#5A7A8A' },
+    { type: 'house', x: 0, z: -19, w: 9, d: 5.5, h: 3.4, rotY: 0, noren: '#6A5A4A' },
+    // 仓库区货箱
+    { type: 'crate', x: -22, z: -13, size: 0.9, seed: 8201 },
+    { type: 'crate', x: -22.5, z: -12, size: 0.75, seed: 8202 },
+    { type: 'barrel', x: -21, z: -11, r: 0.42, h: 0.95, seed: 8203 },
+    { type: 'crate', x: 22, z: -13, size: 0.85, seed: 8204 },
+    { type: 'barrel', x: 21, z: -12, r: 0.4, h: 0.9, seed: 8205 },
+
+    // ---- 东西两翼：民居 ----
+    { type: 'house', x: -26, z: 4, w: 6, d: 5, h: 2.5, rotY: 0.14, noren: '#D9A0B8' },
+    { type: 'house', x: -26, z: -5, w: 5.5, d: 5, h: 2.4, rotY: 0.1, noren: '#7FB069' },
+    { type: 'house', x: 26, z: 4, w: 6, d: 5, h: 2.5, rotY: -0.14, noren: '#C8A05A' },
+    { type: 'house', x: 26, z: -5, w: 5.5, d: 5, h: 2.4, rotY: -0.1, noren: '#A878B8' },
+
+    // ---- 街道灯笼（沿主街与两翼延伸）----
+    // 这些新增灯笼**不创建 PointLight**（light: false）：
+    // 实测点光源 33→43 会让帧率从 ~57fps 掉到 28fps。
+    // 灯笼的发光观感来自 emissive 材质，关掉光源后视觉几乎无差别。
+    { type: 'lantern', x: -6.4, z: 14, poleH: 2.8, light: false },
+    { type: 'lantern', x: 6.4, z: 14, poleH: 2.8, light: false },
+    { type: 'lantern', x: -6.4, z: 18, poleH: 2.8, light: false },
+    { type: 'lantern', x: 6.4, z: 18, poleH: 2.8, light: false },
+    { type: 'lantern', x: -6.4, z: -14, poleH: 2.8, light: false },
+    { type: 'lantern', x: 6.4, z: -14, poleH: 2.8, light: false },
+    { type: 'lantern', x: -20, z: 8, poleH: 2.6, light: false },
+    { type: 'lantern', x: 20, z: 8, poleH: 2.6, light: false },
+    { type: 'lantern', x: -20, z: -8, poleH: 2.6, light: false },
+    { type: 'lantern', x: 20, z: -8, poleH: 2.6, light: false },
+
+    // ---- 城镇樱花（点缀）----
+    { type: 'sakura', x: -24, z: 14, scale: 1.1, seed: 8301 },
+    { type: 'sakura', x: 24, z: 14, scale: 1.05, seed: 8302 },
+    { type: 'sakura', x: -24, z: -18, scale: 1.0, seed: 8303 },
+    { type: 'sakura', x: 24, z: -18, scale: 1.1, seed: 8304 },
+    { type: 'sakura', x: 0, z: 15.5, scale: 1.15, seed: 8305 },
+    { type: 'sakura', x: -14, z: -20, scale: 1.0, seed: 8306 },
+    { type: 'sakura', x: 14, z: -20, scale: 1.05, seed: 8307 },
+
+    // ---- 城镇篱笆（区块分隔）----
+    { type: 'fence', x: -30, z: 0, len: 10, rotY: Math.PI / 2 },
+    { type: 'fence', x: 30, z: 0, len: 10, rotY: Math.PI / 2 },
+    { type: 'fence', x: -12, z: 22, len: 8, rotY: 0 },
+    { type: 'fence', x: 12, z: 22, len: 8, rotY: 0 },
+
+    // ---- 城镇碑文（新增，供支线使用）----
+    { type: 'stele', x: -15, z: 20, uid: 'stele_town_2' },
+    { type: 'stele', x: 15, z: -20, uid: 'stele_town_3' },
+
+    // ---- 城镇宝箱（新增）----
+    { type: 'chest', x: -28, z: 12, uid: 'chest_town_1', loot: 'common' },
+    { type: 'chest', x: 28, z: -12, uid: 'chest_town_2', loot: 'rare' },
 
     // ===== 城镇：篱笆 =====
     { type: 'fence', x: -17, z: 8, len: 8, rotY: Math.PI / 2 },
@@ -239,6 +324,76 @@
               obi: '#7FB8C8', obiSh: '#4A8A9A' },
       day: { x: 130, z: 140 }, night: { x: 130, z: 140 },
       dialogue: 'd_umibe_intro'
+    },
+
+    // =====================================================================
+    // 城镇扩建追加的 NPC（7 → 14 个）
+    //
+    // 这些 NPC 都放在扩展后的城镇范围内（X[-30,30] Z[-22,22]），
+    // 各自有对话，其中 5 个发布支线。
+    // =====================================================================
+
+    // ===== 北侧市集：卖鱼与杂货的老妇 =====
+    {
+      id: 'npc_ito', name: 'いと', title: '市集の鱼屋',
+      look: { kimono: '#C87A6A', kimonoSh: '#9A5A4A', hair: '#8B6A4A', hairSh: '#6B4A30',
+              obi: '#FBF3E4', obiSh: '#D8D0C0' },
+      day: { x: -13, z: 15 }, night: { x: -13, z: 15 },
+      dialogue: 'd_ito_chat', shop: 'shop_anzu'
+    },
+
+    // ===== 北侧：市集的年轻货郎 =====
+    {
+      id: 'npc_saburo', name: '三郎', title: '行商',
+      look: { kimono: '#7A8AB8', kimonoSh: '#5A6A98', hair: '#3B2E36', hairSh: '#2A1F26',
+              obi: '#D9A0B8', obiSh: '#B87890' },
+      day: { x: 13, z: 15 }, night: { x: 13, z: 15 },
+      dialogue: 'd_saburo_chat'
+    },
+
+    // ===== 南侧仓库：管库的老者 =====
+    {
+      id: 'npc_kura', name: '倉吉', title: '蔵番',
+      look: { kimono: '#6A5A4A', kimonoSh: '#4A3E32', hair: '#D8D2C4', hairSh: '#B8B2A4',
+              obi: '#8A7A5A', obiSh: '#6A5A3E' },
+      day: { x: -20, z: -13 }, night: { x: -20, z: -13 },
+      dialogue: 'd_kura_chat'
+    },
+
+    // ===== 南侧工坊：铁匠的徒弟 =====
+    {
+      id: 'npc_kano', name: '加乃', title: '鍛冶の弟子',
+      look: { kimono: '#8A7A6A', kimonoSh: '#5A4E42', hair: '#5A3E2E', hairSh: '#3A281E',
+              obi: '#C8A05A', obiSh: '#9A7A3E' },
+      day: { x: 20, z: -14 }, night: { x: 20, z: -14 },
+      dialogue: 'd_kano_chat'
+    },
+
+    // ===== 东翼：守望的年轻守卫 =====
+    {
+      id: 'npc_hayashi', name: '林', title: '町の番人',
+      look: { kimono: '#5A6A5A', kimonoSh: '#3A4A3A', hair: '#2E3A2E', hairSh: '#1E2820',
+              obi: '#8A6A4A', obiSh: '#5C4430' },
+      day: { x: 27, z: 8 }, night: { x: 27, z: 8 },
+      dialogue: 'd_hayashi_chat'
+    },
+
+    // ===== 西翼：钓鱼的孩子 =====
+    {
+      id: 'npc_suzu', name: 'すず', title: '町の子供',
+      look: { kimono: '#F7C8D8', kimonoSh: '#D9A0B8', hair: '#4A3025', hairSh: '#2E1E16',
+              obi: '#E8C25A', obiSh: '#B89840' },
+      day: { x: -27, z: -8 }, night: { x: -27, z: -8 },
+      dialogue: 'd_suzu_chat'
+    },
+
+    // ===== 湊町追加：码头搬运工 =====
+    {
+      id: 'npc_taro', name: '太郎', title: '沖仲仕',
+      look: { kimono: '#4A6A7A', kimonoSh: '#2E4A5A', hair: '#3B2E36', hairSh: '#2A1F26',
+              obi: '#C87A4A', obiSh: '#9A5A2E' },
+      day: { x: 122, z: 78 }, night: { x: 122, z: 78 },
+      dialogue: 'd_taro_chat'
     }
   ];
 
