@@ -3,7 +3,7 @@
 ## 这是什么
 
 单文件、双击即玩的**和风幻想动作 RPG**。零依赖、零网络、零外部资源：
-整个游戏就是一个 `game.html`（约 1.03 MB，内联全部代码与程序化贴图）。
+整个游戏就是一个 `game.html`（约 1.05 MB，内联全部代码与程序化贴图）。
 不是 MMO，是"有 MMO 世界结构感的单人动作 RPG"。
 
 线上：https://kurilx.github.io/htmlGame-MusubiNoMachi/
@@ -17,6 +17,9 @@ node tools/verify-build.js     # 单文件验收 21 项
 node tools/verify-online.js    # 线上验收 19 项
 node tools/verify-vfx.js       # 特效验收 6 项
 node tools/verify-aim.js       # 瞄准验收（可传 URL 测线上）
+node tools/verify-quest.js     # 任务系统 19 项
+node tools/verify-perf.js      # 性能 6 项
+node tools/verify-dungeon.js   # 副本系统 23 项
 node tools/shot-natural.js <x> <z> out.png   # 用游戏相机截图
 ```
 
@@ -66,14 +69,13 @@ tools/              CDP 验收与截图脚本
 
 **已完成**：战斗手感、5.5 头身角色、彩色阴影、程序化材质、多区域地形、
 280×270 单张连续大世界（5 个可玩地区）、性能优化（draw calls 1481→883）、
-**任务系统（結ノ町主线 6 章 + 3 条支线 + 新手引导 + 任务日志 UI）**。
+**任务系统（結ノ町主线 6 章 + 3 条支线 + 新手引导 + 任务日志 UI）**、
+**副本系统（独立场景切换 + 3 副本 + 2 个新 Boss）**。
 
 **未完成**：
-- **副本机制完全没实现**。`G.DATA.DUNGEON` 有 4 房间数据，但**零代码读取**；
-  三个副本入口都还是 `toast('（副本将在下一版开放）')`。
-  Boss 目前是在门前召唤（由 `Q.maybeSpawnBoss` 触发），不是独立场景。
 - 神山 / 湊町 / 渚 各自的主线（结构已就绪，只需加数据 + 在 `QUEST_LINES` 注册）。
 - 城镇扩大、NPC 扩到 12~14、支线扩到 8~12 条。
+- 副本内可以补机关、宝箱、中途存档点。
 - `docs/ISSUE-blue-region.md` 记录的蓝色区域视觉缺陷。
 
 **已知性能问题**：线上首访启动约 25 秒（本地 4~6 秒），瓶颈在 `W.build` 的物件构建与 shader 编译。
@@ -87,6 +89,19 @@ tools/              CDP 验收与截图脚本
   `talk` / `kill`（count）/ `boss` / `knot` / `collect`（count）/ `reach`
 - `reach` 靠 `Q.checkReach(dt, player)` 轮询判定（此前 `onReach` 没有任何调用点，是个 bug）
 - 任务状态由 `80-save.js` 的 `quest` 字段存盘（此前完全没存，读档会清零）
+
+## 副本系统约定（加新副本时看这里）
+
+- 副本定义在 `src/data/zones.js` 的 `G.DATA.DUNGEONS`，
+  运行时在 `src/53-dungeon.js`
+- 每个副本必须有 `gateUid`（对应世界里的 gate 交互物）、`rooms`（数组，
+  最后一间是 `boss`）
+- **进入方式是整体替换 `G.world.scene`**，不是在大地图上围区域。
+  安全前提：全项目对场景的引用都走 `G.world.scene`，没有缓存引用
+- `W.groundY` 在 `inDungeon` 时返回 0（副本是平地）
+- 场景切换后必须调 `G.camera.snap()`，否则相机会从旧位置插值
+- 新增 Boss 时注意：生成位置要离玩家入口足够远（>3 单位），
+  否则 Boss 体型大会把玩家糊住；出口要离玩家出生点远，否则会被立刻传送走
 
 ## 踩过的坑（改代码前先看）
 

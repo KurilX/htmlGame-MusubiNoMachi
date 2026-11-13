@@ -63,7 +63,9 @@
 | 神山 | 高山 + 登山道 + 山顶神社 | 峰顶 43.1 |
 | 湊町 | 码头小镇（栈桥/渔船/仓库） | 台地 1.2 |
 | 渚 | 沙滩野外（礁石/海草/入海） | -2.3（部分水下） |
-| 忘れ緒の社 | 副本（**机制未实现**，见下方遗留） | — |
+| 忘れ緒の社 | 副本「忘れ緒の社」—— Boss 結びの神 | — |
+| 神山・岩融の窟 | 副本 —— Boss 岩融（HP 1200） | — |
+| 渚・潮の淵 | 副本 —— Boss 潮の女（HP 1000） | — |
 
 **战斗**
 - 动作向：鼠标指向、突进普攻、4 技能、闪避
@@ -136,6 +138,7 @@ node tools/verify-vfx.js      # 特效 6 项
 node tools/verify-aim.js      # 瞄准 4 项
 node tools/verify-perf.js     # 性能 6 项
 node tools/verify-quest.js    # 任务系统 19 项
+node tools/verify-dungeon.js  # 副本系统 23 项
 # 以上除 verify-online 外都支持传入 URL 测线上：
 #   node tools/verify-quest.js https://kurilx.github.io/htmlGame-MusubiNoMachi/game.html
 
@@ -202,7 +205,8 @@ docs/
 - [x] 性能：draw calls 1481→883，启动 21s→3~7.5s
 - [x] 性能：修复「走路每 1~3 秒卡一次」（图集缓存 key 永不命中），47→60fps
 - [x] **任务系统**：結ノ町主线 6 章（含打怪与 Boss）+ 3 条支线 + 新手引导 + 任务日志
-- [ ] **副本机制**：`G.DATA.DUNGEON` 的数据结构齐备（4 房间），但**尚无任何代码读取它**。门口交互目前是 `G.ui.toast('（副本将在下一版开放）')`；Boss 暂由任务在门前召唤
+- [x] **副本系统**：独立场景切换 + 3 个副本（忘れ緒の社 / 岩融の窟 / 潮の淵）
+      + 2 个全新 Boss（岩融 HP1200 / 潮の女 HP1000），清房推进、击杀开后出口
 - [ ] 神山 / 湊町 / 渚 各自的主线（结构已就绪，加数据即可）
 - [ ] 城镇扩到 60×44、NPC 扩到 12~14、支线扩到 8~12 条
 - [ ] 修复 `docs/ISSUE-blue-region.md` 记录的蓝色区域
@@ -214,7 +218,6 @@ docs/
 |---|---|---|
 | 画面左下角蓝色区域 | 视觉瑕疵，野外高处出现，不影响操作 | [`docs/ISSUE-blue-region.md`](docs/ISSUE-blue-region.md) |
 | 线上启动约 25 秒 | 首次访问体验差（本地 3~7.5s，线上还要下载 1 MB） | 尚未记录成文档；瓶颈在 `W.build` 的物件构建与 shader 编译 |
-| 副本机制未实现 | 三个副本入口都只弹 toast | 见路线 |
 
 ---
 
