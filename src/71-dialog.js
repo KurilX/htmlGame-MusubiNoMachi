@@ -125,8 +125,15 @@
       try { data.onEnd(); } catch (e) { console.error(e); }
     }
 
-    // 任务对话完成
+    // 任务对话完成（推进 talk 类型步骤）
     if (npc && G.quest) G.quest.onTalk(npc.def.id);
+
+    // 自动派发该 NPC 的任务。
+    // 放在 onTalk 之后：先结算"回报"，再给新任务，
+    // 这样交任务和接下一步可以在同一次对话里完成。
+    if (npc && G.quest && G.quest.offerFromNpc) {
+      G.quest.offerFromNpc(npc.def.id);
+    }
 
     // 开店
     if (skipShop) {

@@ -58,6 +58,22 @@
     if (G.quest) G.quest.init();
     if (G.dlg) G.dlg.init();
 
+    // 新手引导：没有任何进行中/已完成任务时，自动接初始地主线第一章。
+    // 这样玩家一进游戏就知道该干什么，不用先去找 NPC 才知道。
+    if (G.quest) {
+      var hasAny = false;
+      for (var qk in G.quest.state.active) { hasAny = true; break; }
+      if (!hasAny) {
+        for (var dk in G.quest.state.done) { hasAny = true; break; }
+      }
+      if (!hasAny) {
+        G.quest.start('town_01');
+        setTimeout(function () {
+          G.ui.toast('按 L 查看手账，右上角会提示当前目标', 4200);
+        }, 1200);
+      }
+    }
+
     // 恢复存档里的世界状态
     if (data && data.world) {
       G.world.timeOfDay = data.world.timeOfDay != null ? data.world.timeOfDay : 0.32;
@@ -179,9 +195,15 @@
     // UI 与特效保持更新（不受 hitstop 影响）
     G.fx.update(dt);
     G.ui.update(dt);
+    if (G.ui.updateQuestTracker) G.ui.updateQuestTracker();
     // 相机跟随：y 也要跟地形走，否则上坡时角色会跑出画面
     var groundY = G.world.groundY(st.x, st.z);
     G.camera.update(dt, { x: st.x, z: st.z, y: groundY + 0.6 });
+
+    // ---- 到达判定（任务 reach 步骤）----
+    // 之前 onReach 只有定义、没有任何调用点，导致所有 reach 步骤永远不完成。
+    // 每 0.25 秒检查一次玩家与各"到达点"的距离。
+    if (G.quest && G.quest.checkReach) G.quest.checkReach(dt, st);
 
     // 交互
     if (G.input.pressed.interact) {
@@ -190,6 +212,7 @@
 
     // 面板
     if (G.input.pressed.inventory) G.ui.togglePanel('inventory');
+    if (G.input.pressed.questlog) G.ui.togglePanel('quest');
     if (G.input.pressed.escape) {
       if (G.ui.anyPanelOpen()) { G.ui.closeAllPanels(); }
     }

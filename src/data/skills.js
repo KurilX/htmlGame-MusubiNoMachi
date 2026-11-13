@@ -29,7 +29,7 @@
       cooldown: 3.2, damageMult: 1.3, speed: 22, range: 13, pierce: 3,
       hitstopMs: 45, shake: 0.18,
       sfx: 'skill3', vfx: 'air_blade',
-      unlock: { type: 'quest', value: 'main_02' }
+      unlock: { type: 'quest', value: 'town_03' }
     },
     4: {
       id: 4, name: '受け流し', romaji: 'ukenagashi',
@@ -38,7 +38,7 @@
       cooldown: 9.0, damageMult: 3.0, duration: 1.2, radius: 3.2,
       hitstopMs: 120, shake: 0.5, knockback: 7,
       sfx: 'skill4', vfx: 'parry_flash',
-      unlock: { type: 'quest', value: 'main_03' }
+      unlock: { type: 'quest', value: 'town_05' }
     }
   };
 

@@ -50,6 +50,13 @@
     U.goldText = G.dom.el('span', 'gold', meta, '0 文');
     U.clockText = G.dom.el('span', 'clock', meta, '06:00');
 
+    // ---- 右上：任务追踪（常驻，显示"现在该做什么"）----
+    // 新手引导的核心：不用打开任何面板就知道下一步该干什么。
+    U.trackerBox = G.dom.el('div', 'quest-tracker', root);
+    U.trackerBox.style.display = 'none';
+    U.trackerTitle = G.dom.el('div', 'qt-title', U.trackerBox, '');
+    U.trackerStep = G.dom.el('div', 'qt-step', U.trackerBox, '');
+
     // ---- 左下：技能栏 ----
     var bar = G.dom.el('div', 'skillbar', root);
     U.skillBar = bar;
@@ -96,6 +103,7 @@
     // ---- 面板（背包 / 商店） ----
     U.buildInventoryPanel();
     U.buildShopPanel();
+  U.buildQuestPanel();
 
     // ---- 标题 ----
     U.fadeIn = G.dom.el('div', 'fadein', root);
@@ -135,6 +143,87 @@
     U.bagList = G.dom.el('div', 'baglist', bagCol);
 
     U.panels.inventory = p;
+  };
+
+  // =====================================================================
+  // 面板：任务日志
+  // =====================================================================
+  U.buildQuestPanel = function () {
+    var p = G.dom.el('div', 'overlay panel-quest', U.root);
+    p.style.display = 'none';
+    var head = G.dom.el('div', 'ov-head', p);
+    G.dom.el('h2', '', head, '手账');
+    G.dom.el('div', 'hint', head, 'L / Esc 关闭');
+
+    U.questList = G.dom.el('div', 'questlist', p);
+    U.panels.quest = p;
+  };
+
+  /** 重绘任务日志 */
+  U.renderQuestPanel = function () {
+    if (!U.questList || !G.quest) return;
+    var box = U.questList;
+    box.innerHTML = '';
+
+    var items = G.quest.list();
+    if (!items.length) {
+      G.dom.el('div', 'quest-empty', box, '现在没有在办的事。去镇上和人多说说话。');
+      return;
+    }
+
+    items.forEach(function (item) {
+      var def = item.def;
+      var st = item.st;
+      var isMain = (def.chapter || 0) > 0;
+
+      var card = G.dom.el('div', 'quest-card' + (isMain ? ' main' : ' side'), box);
+
+      var titleRow = G.dom.el('div', 'q-title-row', card);
+      G.dom.el('span', 'q-tag', titleRow, isMain ? '主线' : '支线');
+      G.dom.el('span', 'q-title', titleRow, def.title);
+
+      if (isMain && def.chapter) {
+        G.dom.el('span', 'q-chapter', titleRow, '第 ' + def.chapter + ' 章');
+      }
+
+      if (def.brief) {
+        G.dom.el('div', 'q-brief', card, def.brief);
+      }
+
+      // 步骤列表
+      var stepsBox = G.dom.el('div', 'q-steps', card);
+      for (var i = 0; i < def.steps.length; i++) {
+        var step = def.steps[i];
+        var done = !!st.steps[i];
+        var row = G.dom.el('div', 'q-step' + (done ? ' done' : ''), stepsBox);
+
+        G.dom.el('span', 'q-mark', row, done ? '✓' : '·');
+
+        // 计数类步骤显示进度
+        var text = step.text;
+        if (step.count > 1) {
+          var pkey = (step.type === 'kill') ? ('k' + i) : ('c' + i);
+          var cur = st.collectProgress[pkey] || 0;
+          text += '  ' + Math.min(cur, step.count) + '/' + step.count;
+        }
+        G.dom.el('span', 'q-text', row, text);
+      }
+
+      // 提示（只在未完成时显示）
+      if (def.hint && item.cur >= 0) {
+        G.dom.el('div', 'q-hint', card, '▸ ' + def.hint);
+      }
+    });
+
+    // 主线总进度
+    var lines = G.DATA.QUEST_LINES || {};
+    for (var key in lines) {
+      var lp = G.quest.lineProgress(key);
+      if (lp && lp.done > 0 && lp.done < lp.total) {
+        G.dom.el('div', 'q-line-progress', box,
+          lp.name + ' 主线：' + lp.done + ' / ' + lp.total + ' 章');
+      }
+    }
   };
 
   // =====================================================================
@@ -274,6 +363,39 @@
     }
   };
 
+  // =====================================================================
+  // 任务追踪 HUD（常驻显示当前该做什么）
+  // =====================================================================
+  
+  var _trackLastText = null;
+  
+  U.updateQuestTracker = function () {
+    if (!U.trackerBox || !G.quest) return;
+    var next = G.quest.nextStep ? G.quest.nextStep() : null;
+    var def = G.quest.tracked ? G.quest.tracked() : null;
+    
+    if (!def || !next) {
+      if (_trackLastText !== null) {
+        U.trackerBox.style.display = 'none';
+        _trackLastText = null;
+      }
+      return;
+    }
+    
+    var step = next.step;
+    var text = step.text;
+    if (step.count > 1) {
+      text += '  ' + Math.min(next.progress, next.need) + '/' + next.need;
+    }
+    var full = def.title + '｜' + text;
+    if (full === _trackLastText) return;   // 内容没变就不碰 DOM
+    _trackLastText = full;
+    
+    U.trackerBox.style.display = '';
+    U.trackerTitle.textContent = def.title;
+    U.trackerStep.textContent = text;
+  };
+  
   U.refreshHUD = function () {
     // 触发一次重绘（低开销）
     if (G.player.state) U.update(0.016);
@@ -347,7 +469,7 @@
   // 面板开关
   // =====================================================================
   U.togglePanel = function (key) {
-    var keys = ['inventory', 'shop'];
+    var keys = ['inventory', 'shop', 'quest'];
     for (var i = 0; i < keys.length; i++) {
       var p = U.panels[keys[i]];
       if (!p) continue;
@@ -362,7 +484,7 @@
   };
 
   U.closeAllPanels = function () {
-    var keys = ['inventory', 'shop'];
+    var keys = ['inventory', 'shop', 'quest'];
     for (var i = 0; i < keys.length; i++) {
       if (U.panels[keys[i]]) U.panels[keys[i]].style.display = 'none';
     }
@@ -370,7 +492,7 @@
   };
 
   U.anyPanelOpen = function () {
-    var keys = ['inventory', 'shop'];
+    var keys = ['inventory', 'shop', 'quest'];
     for (var i = 0; i < keys.length; i++) {
       var p = U.panels[keys[i]];
       if (p && p.style.display !== 'none') return true;
@@ -381,6 +503,7 @@
   U.renderPanel = function (key) {
     if (key === 'inventory') U.renderInventory();
     if (key === 'shop') U.renderShop();
+    if (key === 'quest') U.renderQuestPanel();
   };
 
   // =====================================================================
