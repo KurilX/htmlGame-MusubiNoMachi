@@ -19,6 +19,15 @@ const path = require('path');
 const { launchOwnChrome, sleep } = require('./cdp');
 const ROOT = path.resolve(__dirname, '..');
 
+// 目标地址：默认本地 dev.html，也可传参测线上：
+//   node tools/verify-perf.js https://kurilx.github.io/htmlGame-MusubiNoMachi/game.html
+//
+// 【踩过的坑（这个错我犯了第二次）】verify-aim.js 当初也把 URL 写死，
+// 传参被静默忽略，差点把本地结果当成线上验收。
+// 这里显式支持 argv[2]，并打印真实加载的地址。
+const TARGET_URL = process.argv[2] ||
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now());
+
 async function main() {
   const results = [];
   function check(name, ok, detail) {
@@ -26,15 +35,14 @@ async function main() {
     console.log((ok ? '  PASS  ' : '  FAIL  ') + name + (detail != null ? '  [' + detail + ']' : ''));
   }
 
-  console.log('=== 性能回归测试 ===\n');
+  console.log('=== 性能回归测试 ===');
+  console.log('目标地址: ' + TARGET_URL + '\n');
 
   const b = await launchOwnChrome({ width: 1280, height: 720 });
   const cdp = b.cdp;
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
-  await cdp.send('Page.navigate', {
-    url: 'file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now()
-  });
+  await cdp.send('Page.navigate', { url: TARGET_URL });
 
   let booted = false;
   for (let i = 0; i < 50; i++) {
