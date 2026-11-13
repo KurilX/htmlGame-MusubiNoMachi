@@ -257,12 +257,14 @@
     }
     if (!pending.length) return;
 
-    // 用世界里的 gate 位置做判定
-    var gates = (G.world.interactables || []).filter(function (it) {
-      return it.kind === 'gate';
-    });
-    for (var g = 0; g < gates.length; g++) {
-      var gate = gates[g];
+    // 对**所有**可交互物做距离判定，不再只限 gate。
+    //
+    // 原来的实现只检查 kind === 'gate'，导致 reach 步骤只能指向副本入口。
+    // 但地区主线里会用到碑文（stele_beach_1）等其它目标，
+    // 那样 reach 步骤永远无法完成。
+    var targets = (G.world.interactables || []);
+    for (var g = 0; g < targets.length; g++) {
+      var gate = targets[g];
       if (pending.indexOf(gate.uid) < 0) continue;
       if (reachedOnce[gate.uid]) continue;
       var dx = gate.x - player.x, dz = gate.z - player.z;
@@ -403,6 +405,61 @@
       if (!Q.state.done[line.order[i]]) return false;
     }
     return true;
+  };
+
+  // =====================================================================
+  // 地区进入提示（帮助玩家发现新主线）
+  // =====================================================================
+  //
+  // 玩家第一次走进某个地区、且该地区主线尚未开始时，
+  // 提示"这里有主线找谁接"。
+  // 只在第一次进入时提示一次，不打扰重复往返。
+  var regionSeen = {};
+  var regionTimer = 0;
+  var REGION_CHECK_INTERVAL = 1.0;
+
+  Q.tickRegion = function (dt, player) {
+    if (!player || !G.terrain || !G.terrain.regionAt) return;
+    regionTimer -= dt;
+    if (regionTimer > 0) return;
+    regionTimer = REGION_CHECK_INTERVAL;
+
+    var region = G.terrain.regionAt(player.x, player.z);
+    if (!region || regionSeen[region]) return;
+    regionSeen[region] = true;
+
+    // 该地区有主线吗？
+    var line = G.DATA.QUEST_LINES && G.DATA.QUEST_LINES[region];
+    if (!line) return;
+
+    // 已经开始了就别提示
+    var started = false;
+    for (var i = 0; i < line.order.length; i++) {
+      if (Q.state.active[line.order[i]] || Q.state.done[line.order[i]]) {
+        started = true;
+        break;
+      }
+    }
+    if (started) return;
+
+    // 找到发布者的名字
+    var giverName = '';
+    if (line.giver) {
+      var npc = (G.world.npcs || []).find(function (n) {
+        return n.def && n.def.id === line.giver;
+      });
+      if (npc && npc.def) giverName = npc.def.name;
+    }
+    if (!giverName) return;
+
+    G.ui.toast('—— ' + line.name + ' ——' +
+      (giverName ? '　这里有事找你。去和「' + giverName + '」说话。' : ''), 4200);
+  };
+
+  /** 重置地区提示记录（读档时用） */
+  Q.resetRegionSeen = function () {
+    regionSeen = {};
+    regionTimer = 0;
   };
 
 })(window.G = window.G || {});

@@ -205,6 +205,10 @@
     // 每 0.25 秒检查一次玩家与各"到达点"的距离。
     if (G.quest && G.quest.checkReach) G.quest.checkReach(dt, st);
 
+    // ---- 地区进入提示 ----
+    // 第一次走进有主线的地区时，提示"去和谁说话"，帮助玩家发现新主线。
+    if (G.quest && G.quest.tickRegion) G.quest.tickRegion(dt, st);
+
     // ---- 副本推进 ----
     if (G.dungeon && G.dungeon.active) {
       G.dungeon.update(dt, st);

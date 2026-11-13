@@ -94,7 +94,8 @@ async function main() {
   check('地形系统已加载', world.hasTerrain === true);
   check('地形网格已生成', world.groundMeshes >= 2, world.groundMeshes + ' mesh');
   check('植被已生成', world.hasVegetation === true);
-  check('NPC 已生成', world.npcs === 4, world.npcs);
+  // 同上：不写死数量，随地区扩展增长
+  check('NPC 已生成', world.npcs >= 4, world.npcs);
 
   // ---- 真实交互 ----
   const before = await cdp.eval(`({x: G.player.state.x, z: G.player.state.z})`);
