@@ -389,7 +389,19 @@
         if (G.camera.cam) {
           e.hpBar.mesh.lookAt(G.camera.cam.position.x, barY, G.camera.cam.position.z);
         }
-        E.drawHpBar(e);
+        // 【性能】只在血量真的变化时重绘。
+        //
+        // 原来无条件每帧 drawHpBar。它会：
+        //   clearRect + 3 次 fillRect + tex.needsUpdate = true
+        // 最后一行会让这张 64x8 的纹理**每帧重新上传到 GPU**，
+        // 而上传统一是同步阻塞的，还会打断渲染批次。
+        // 战斗时场上 5~8 只残血敌人 => 每帧 5~8 次纹理上传。
+        //
+        // 血条只在掉血时才需要变，按 hp 缓存即可。
+        if (e.hpBar.lastHp !== e.hp) {
+          E.drawHpBar(e);
+          e.hpBar.lastHp = e.hp;
+        }
       }
     }
   };

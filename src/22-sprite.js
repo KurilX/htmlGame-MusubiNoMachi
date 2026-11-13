@@ -13,17 +13,35 @@
 
   // ---------- atlas 缓存 ----------
   var atlasCache = {};
-  var lookKeySeq = 0;
 
+  /**
+   * 由 look 的实际内容生成缓存 key。
+   *
+   * 【踩过的超级大坑：缓存从未命中】
+   * 原实现是：
+   *     look.__key = 'L' + (++lookKeySeq) + ':' + parts.join(',');
+   * key 里带了一个**自增序号**。而 G.makeLook(def.look) 每次调用都返回
+   * 一个全新的对象，于是每只怪拿到的 key 都是新的 -> 缓存永远不命中 ->
+   * **每刷一只怪都重新绘制整套图集（8 方向 × 13 帧的 canvas 绘制）**。
+   *
+   * 实测影响：
+   *   - G.getChibiAtlas 单次 19ms（本该接近 0）
+   *   - 刷一只怪 20~27ms
+   *   - 走路时每 1~3 秒固定卡一次：因为 7 个刷怪区每 1.2 秒补一只，
+   *     每次补员就是一次 20ms 的图集重绘（见 tools/_perf-walk.js 的帧记录）
+   *
+   * 修法：key 只由 look 的字段内容决定，去掉自增序号。
+   * 同一个外观（同样字段值）必然得到同一个 key。
+   */
   function lookKey(look) {
-    if (!look.__key) {
-      var parts = [];
-      for (var k in look) {
-        if (k === '__key') continue;
-        parts.push(k + '=' + look[k]);
-      }
-      look.__key = 'L' + (++lookKeySeq) + ':' + parts.join(',');
+    if (look.__key) return look.__key;
+    var parts = [];
+    for (var k in look) {
+      if (k === '__key') continue;
+      parts.push(k + '=' + look[k]);
     }
+    parts.sort();                                  // 字段顺序无关
+    look.__key = 'L:' + parts.join(',');
     return look.__key;
   }
 

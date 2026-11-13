@@ -395,7 +395,7 @@ canvas#gl {
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
 </style>
-<!-- 构建产物：2026-11-12T08:58:45.038Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-13T02:33:04.813Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -4958,17 +4958,35 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
   // ---------- atlas 缓存 ----------
   var atlasCache = {};
-  var lookKeySeq = 0;
 
+  /**
+   * 由 look 的实际内容生成缓存 key。
+   *
+   * 【踩过的超级大坑：缓存从未命中】
+   * 原实现是：
+   *     look.__key = 'L' + (++lookKeySeq) + ':' + parts.join(',');
+   * key 里带了一个**自增序号**。而 G.makeLook(def.look) 每次调用都返回
+   * 一个全新的对象，于是每只怪拿到的 key 都是新的 -> 缓存永远不命中 ->
+   * **每刷一只怪都重新绘制整套图集（8 方向 × 13 帧的 canvas 绘制）**。
+   *
+   * 实测影响：
+   *   - G.getChibiAtlas 单次 19ms（本该接近 0）
+   *   - 刷一只怪 20~27ms
+   *   - 走路时每 1~3 秒固定卡一次：因为 7 个刷怪区每 1.2 秒补一只，
+   *     每次补员就是一次 20ms 的图集重绘（见 tools/_perf-walk.js 的帧记录）
+   *
+   * 修法：key 只由 look 的字段内容决定，去掉自增序号。
+   * 同一个外观（同样字段值）必然得到同一个 key。
+   */
   function lookKey(look) {
-    if (!look.__key) {
-      var parts = [];
-      for (var k in look) {
-        if (k === '__key') continue;
-        parts.push(k + '=' + look[k]);
-      }
-      look.__key = 'L' + (++lookKeySeq) + ':' + parts.join(',');
+    if (look.__key) return look.__key;
+    var parts = [];
+    for (var k in look) {
+      if (k === '__key') continue;
+      parts.push(k + '=' + look[k]);
     }
+    parts.sort();                                  // 字段顺序无关
+    look.__key = 'L:' + parts.join(',');
     return look.__key;
   }
 
@@ -6377,7 +6395,19 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         if (G.camera.cam) {
           e.hpBar.mesh.lookAt(G.camera.cam.position.x, barY, G.camera.cam.position.z);
         }
-        E.drawHpBar(e);
+        // 【性能】只在血量真的变化时重绘。
+        //
+        // 原来无条件每帧 drawHpBar。它会：
+        //   clearRect + 3 次 fillRect + tex.needsUpdate = true
+        // 最后一行会让这张 64x8 的纹理**每帧重新上传到 GPU**，
+        // 而上传统一是同步阻塞的，还会打断渲染批次。
+        // 战斗时场上 5~8 只残血敌人 => 每帧 5~8 次纹理上传。
+        //
+        // 血条只在掉血时才需要变，按 hp 缓存即可。
+        if (e.hpBar.lastHp !== e.hp) {
+          E.drawHpBar(e);
+          e.hpBar.lastHp = e.hp;
+        }
       }
     }
   };
