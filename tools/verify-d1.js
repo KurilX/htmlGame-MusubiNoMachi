@@ -116,12 +116,21 @@ async function run(cdp, check, results) {
       props: G.world.props.length,
       inter: G.world.interactables.length,
       npcs: G.world.npcs.length,
+      npcsDetail: G.world.npcs.map(function(n){
+        return {
+          hasId: !!(n.def && n.def.id),
+          hasPos: isFinite(n.x) && isFinite(n.z)
+        };
+      }),
       zones: G.world.spawnZones.length
     };
   })()`);
   check('静态物件已构建', world.props > 50, world.props + ' props');
   check('可交互物已注册', world.inter > 20, world.inter + ' interactables');
-  check('NPC 已生成', world.npcs === 4, world.npcs + ' NPC');
+  // NPC 数量会随地区扩展而增长（結ノ町 4 + 神山/湊町/渚 各 1 = 7），
+  // 所以不写死具体数字，只要求 >= 4 且所有 NPC 都有 id 与位置
+  check('NPC 已生成', world.npcs >= 4 && world.npcsDetail && world.npcsDetail.every(function(n){ return n.hasId && n.hasPos; }),
+    world.npcs + ' NPC');
 
   // ---- 3. 真实键盘走路 ----
   // 注意：按住 W 期间要持续推帧，headless 下 rAF 不会自己跑

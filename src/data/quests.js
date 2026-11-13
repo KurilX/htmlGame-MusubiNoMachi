@@ -162,6 +162,234 @@
       ],
       rewards: { exp: 60, gold: 80 },
       nextId: null
+    },
+
+    // =====================================================================
+    // 神山主线：岩融の窟（4 章）
+    //
+    // 主题：「被封住的东西不该被叫醒」
+    // 宮司守着山顶，发现石窟的封印在松；玩家的选择是重新封上而不是杀死它。
+    // =====================================================================
+    mtn_01: {
+      id: 'mtn_01',
+      region: 'mountain', chapter: 1,
+      title: '登山的石阶',
+      giver: 'npc_kannushi',
+      brief: '宫司说，通往山顶的石阶上最近聚了不少妖物，上山的人回不来。',
+      hint: '从北边的山门鸟居开始往上走，山道两侧会有天狗。',
+      steps: [
+        { type: 'kill', target: 'tengu', count: 3, text: '击退山道上的天狗' }
+      ],
+      rewards: { exp: 150, gold: 100 },
+      nextId: 'mtn_02'
+    },
+
+    mtn_02: {
+      id: 'mtn_02',
+      region: 'mountain', chapter: 2,
+      title: '松动的封印',
+      giver: 'npc_kannushi',
+      brief: '石窟的封印石裂了。去山腰看看，把散落的印记找回来。',
+      hint: '山腰的碑文记着封印的来历。',
+      steps: [
+        { type: 'reach', target: 'gate_mountain', text: '走到岩融の窟前' }
+      ],
+      rewards: { exp: 180, gold: 120 },
+      nextId: 'mtn_03'
+    },
+
+    mtn_03: {
+      id: 'mtn_03',
+      region: 'mountain', chapter: 3,
+      title: '窟の中',
+      giver: 'npc_kannushi',
+      brief: '门后的东西已经开始动了。清掉窟里的小鬼，别让它们护着它。',
+      hint: '窟里很暗，但每间房有灯。清光一间才开下一间。',
+      steps: [
+        { type: 'kill', target: 'oni_small', count: 4, text: '清掉窟里的小鬼' }
+      ],
+      rewards: { exp: 240, gold: 160, unlockSkill: 3 },
+      nextId: 'mtn_04'
+    },
+
+    mtn_04: {
+      id: 'mtn_04',
+      region: 'mountain', chapter: 4,
+      title: '岩融',
+      giver: 'npc_kannushi',
+      brief: '古岩之灵已经完全醒来。把它按回去——这次要压得比上次更紧。',
+      hint: '岩融动作慢，但一击很重。它抬手时地面会亮，那是砸地的预兆。',
+      steps: [
+        { type: 'boss', target: 'iwakaguri', text: '击败岩融' }
+      ],
+      rewards: { exp: 700, gold: 450, unlockSkill: 4 },
+      nextId: 'mtn_05'
+    },
+
+    mtn_05: {
+      id: 'mtn_05',
+      region: 'mountain', chapter: 5,
+      title: '封上',
+      giver: 'npc_kannushi',
+      brief: '回去找宫司。他要把封印重新系上。',
+      hint: '宫司在山顶神社前。',
+      steps: [
+        { type: 'talk', target: 'npc_kannushi', text: '向宫司复命' }
+      ],
+      rewards: { exp: 350, gold: 250 },
+      nextId: null
+    },
+
+    // =====================================================================
+    // 湊町主线：潮の淵（4 章）
+    //
+    // 主题：「网里捞上来的不该是人的东西」
+    // 渔师头的网连着三天捞上同一块木牌，海上出现了不该有的声音。
+    // =====================================================================
+    hbr_01: {
+      id: 'hbr_01',
+      region: 'harbor', chapter: 1,
+      title: '不祥的渔获',
+      giver: 'npc_amimoto',
+      brief: '与一的网连着三天捞上同一块木牌。他想知道海里到底有什么。',
+      hint: '码头的仓库附近有不少河童在翻箱子。',
+      steps: [
+        { type: 'kill', target: 'kappa', count: 3, text: '赶走翻箱子的河童' }
+      ],
+      rewards: { exp: 140, gold: 110 },
+      nextId: 'hbr_02'
+    },
+
+    hbr_02: {
+      id: 'hbr_02',
+      region: 'harbor', chapter: 2,
+      title: '栈桥的尽头',
+      giver: 'npc_amimoto',
+      brief: '木牌上的字被海水泡烂了，只认得「潮の淵」三个字。去栈桥尽头看看。',
+      hint: '栈桥一直伸到海里。走到最远端。',
+      steps: [
+        { type: 'reach', target: 'gate_beach', text: '走到沙滩南端的潮の淵入口' }
+      ],
+      rewards: { exp: 170, gold: 130 },
+      nextId: 'hbr_03'
+    },
+
+    hbr_03: {
+      id: 'hbr_03',
+      region: 'harbor', chapter: 3,
+      title: '退潮之后',
+      giver: 'npc_amimoto',
+      brief: '退潮了，渊露了出来。里面的幽霊都是被海留下的人。',
+      hint: '渊里以幽霊为主，它们怕光——用技能打比硬拼省事。',
+      steps: [
+        { type: 'kill', target: 'yurei', count: 4, text: '让渊里的幽霊安息' }
+      ],
+      rewards: { exp: 260, gold: 180 },
+      nextId: 'hbr_04'
+    },
+
+    hbr_04: {
+      id: 'hbr_04',
+      region: 'harbor', chapter: 4,
+      title: '潮の女',
+      giver: 'npc_amimoto',
+      brief: '渊底有人在唱歌。那是被海吞掉的人的记忆聚成的形体。',
+      hint: '潮の女移动很快，会召唤水弹。等她召唤完的间隙再上。',
+      steps: [
+        { type: 'boss', target: 'shio_no_onna', text: '击败潮の女' }
+      ],
+      rewards: { exp: 780, gold: 500 },
+      nextId: 'hbr_05'
+    },
+
+    hbr_05: {
+      id: 'hbr_05',
+      region: 'harbor', chapter: 5,
+      title: '把牌子还回去',
+      giver: 'npc_amimoto',
+      brief: '那块木牌终于能还回海里了。回去找与一。',
+      hint: '与一在栈桥口。',
+      steps: [
+        { type: 'talk', target: 'npc_amimoto', text: '向与一复命' }
+      ],
+      rewards: { exp: 380, gold: 300 },
+      nextId: null
+    },
+
+    // =====================================================================
+    // 渚主线：沙滩（4 章）
+    //
+    // 主题：「有些东西是海送回来的，不是被夺走的」
+    // 老人每天在海边等，等的东西玩家要帮他找到——最后发现是一段记忆。
+    // =====================================================================
+    bch_01: {
+      id: 'bch_01',
+      region: 'beach', chapter: 1,
+      title: '拾贝的老人',
+      giver: 'npc_umibe',
+      brief: '老人在海边捡了四十年贝壳。他说最近捡到的东西不太对。',
+      hint: '沙滩上的礁石缝里躲着河童。',
+      steps: [
+        { type: 'kill', target: 'kappa', count: 3, text: '赶走礁石边的河童' }
+      ],
+      rewards: { exp: 140, gold: 100 },
+      nextId: 'bch_02'
+    },
+
+    bch_02: {
+      id: 'bch_02',
+      region: 'beach', chapter: 2,
+      title: '海送回来的',
+      giver: 'npc_umibe',
+      brief: '老人说他每天捡到同一枚贝壳，上面刻着名字。他想知道是谁。',
+      hint: '沙滩上有三处碑文，记着被海带走的人。',
+      steps: [
+        { type: 'reach', target: 'stele_beach_1', text: '读沙滩上的碑文' }
+      ],
+      rewards: { exp: 150, gold: 110 },
+      nextId: 'bch_03'
+    },
+
+    bch_03: {
+      id: 'bch_03',
+      region: 'beach', chapter: 3,
+      title: '夜里的灯',
+      giver: 'npc_umibe',
+      brief: '碑上刻的是老人自己的名字。他要你帮他确认一件事——他是不是已经死了。',
+      hint: '夜里的沙滩有鬼火。它们或许是答案。',
+      steps: [
+        { type: 'kill', target: 'onibi', count: 4, text: '追上夜里的鬼火' }
+      ],
+      rewards: { exp: 250, gold: 170 },
+      nextId: 'bch_04'
+    },
+
+    bch_04: {
+      id: 'bch_04',
+      region: 'beach', chapter: 4,
+      title: '潮の底',
+      giver: 'npc_umibe',
+      brief: '老人说他记起来了。那扇门后面有他一直在等的东西。',
+      hint: '沙滩南端的潮の淵。走到底。',
+      steps: [
+        { type: 'boss', target: 'shio_no_onna', text: '走到潮の渊底' }
+      ],
+      rewards: { exp: 760, gold: 480 },
+      nextId: 'bch_05'
+    },
+
+    bch_05: {
+      id: 'bch_05',
+      region: 'beach', chapter: 5,
+      title: '贝壳',
+      giver: 'npc_umibe',
+      brief: '把那枚贝壳还给老人。他等这个等了四十年。',
+      hint: '老人在沙滩中部。',
+      steps: [
+        { type: 'talk', target: 'npc_umibe', text: '把那枚贝壳还给老人' }
+      ],
+      rewards: { exp: 400, gold: 320 },
+      nextId: null
     }
   };
 
@@ -176,13 +404,39 @@
       region: 'town',
       name: '結ノ町',
       startId: 'town_01',
+      giver: 'npc_chie',
       // 章节顺序（用于日志 UI 分组与"当前第几章"显示）
       order: ['town_01', 'town_02', 'town_03', 'town_04', 'town_05', 'town_06']
+    },
+    mountain: {
+      region: 'mountain',
+      name: '神山',
+      startId: 'mtn_01',
+      giver: 'npc_kannushi',
+      order: ['mtn_01', 'mtn_02', 'mtn_03', 'mtn_04', 'mtn_05']
+    },
+    harbor: {
+      region: 'harbor',
+      name: '湊町',
+      startId: 'hbr_01',
+      giver: 'npc_amimoto',
+      order: ['hbr_01', 'hbr_02', 'hbr_03', 'hbr_04', 'hbr_05']
+    },
+    beach: {
+      region: 'beach',
+      name: '渚',
+      startId: 'bch_01',
+      giver: 'npc_umibe',
+      order: ['bch_01', 'bch_02', 'bch_03', 'bch_04', 'bch_05']
     }
-    // 将来：
-    // mountain: { region: 'mountain', name: '神山', startId: 'mtn_01', order: [...] },
-    // harbor:   { region: 'harbor',   name: '湊町', startId: 'hbr_01', order: [...] },
-    // beach:    { region: 'beach',    name: '渚',   startId: 'bch_01', order: [...] }
+  };
+
+  /**
+   * 按地区取主线起点 id（供 UI / 调试用）
+   */
+  G.DATA.questLineStart = function (region) {
+    var l = G.DATA.QUEST_LINES[region];
+    return l ? l.startId : null;
   };
 
   // npc -> 对话 id 的映射在 data/zones.js 的 NPCS 里

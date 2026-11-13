@@ -209,6 +209,36 @@
               obi: '#9A968C', obiSh: '#7A766C' },
       day: { x: -2, z: 8 }, night: { x: 0, z: 8.5 },
       dialogue: 'd_roji_lore'
+    },
+
+    // ===== 神山：山顶神社的神主 =====
+    // 站在神社前（(0,142)），负责发布神山主线
+    {
+      id: 'npc_kannushi', name: '宮司', title: '岩融の窟を守る者',
+      look: { kimono: '#E8E4DC', kimonoSh: '#B8B4AC', hair: '#5A5048', hairSh: '#3A342E',
+              obi: '#8A6A4A', obiSh: '#5C4430' },
+      day: { x: 4, z: 142 }, night: { x: 4, z: 142 },
+      dialogue: 'd_kannushi_intro'
+    },
+
+    // ===== 湊町：渔师头 =====
+    // 站在栈桥口附近（(118, 66)），负责发布湊町主线
+    {
+      id: 'npc_amimoto', name: '与一', title: '網元',
+      look: { kimono: '#5A7A8A', kimonoSh: '#3A5A6A', hair: '#3B2E36', hairSh: '#2A1F26',
+              obi: '#C8A05A', obiSh: '#9A7A3E' },
+      day: { x: 116, z: 66 }, night: { x: 118, z: 72 },
+      dialogue: 'd_amimoto_intro'
+    },
+
+    // ===== 渚：海边拾贝的老人 =====
+    // 站在沙滩中部（(130, 140)），负责发布渚主线
+    {
+      id: 'npc_umibe', name: '浜辺の翁', title: '潮を知る者',
+      look: { kimono: '#A8B8A0', kimonoSh: '#7A8A72', hair: '#D8D2C4', hairSh: '#B8B2A4',
+              obi: '#7FB8C8', obiSh: '#4A8A9A' },
+      day: { x: 130, z: 140 }, night: { x: 130, z: 140 },
+      dialogue: 'd_umibe_intro'
     }
   ];
 
