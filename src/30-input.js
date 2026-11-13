@@ -25,6 +25,8 @@
     'KeyE': 'interact', 'KeyF': 'interact',
     'KeyQ': 'rotateL', 'KeyR': 'rotateR',
     'KeyI': 'inventory', 'KeyM': 'map', 'KeyC': 'character',
+    // L = Log（手账/任务日志）。J 已被攻击占用，所以用 L。
+    'KeyL': 'questlog',
     'Escape': 'escape', 'Tab': 'tab', 'KeyP': 'pause',
     'Enter': 'confirm'
   };

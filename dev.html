@@ -394,6 +394,84 @@ canvas#gl {
   padding: 10px 14px; font: 11px/1.5 monospace;
   color: #FFC8C0; white-space: pre-wrap; display: none;
 }
+
+/* ===== 任务追踪（常驻 HUD）===== */
+/* 位置选择：
+   右上角被 toast 占了（toasts 从 top:84px 往下堆，且会临时遮挡），
+   左上角是状态面板，左下是技能栏。
+   放在「右上角下方」仍然会被 toast 压到，所以改到右侧中部——
+   那一带是空的，而且视线自然落点（玩家角色在屏幕中央偏下）。 */
+.quest-tracker {
+  position: absolute; right: 18px; top: 46%;
+  transform: translateY(-50%);
+  min-width: 190px; max-width: 250px;
+  background: rgba(24, 20, 24, 0.76);
+  border-left: 3px solid #F7C8D8;
+  border-radius: 4px;
+  padding: 7px 10px 8px;
+  backdrop-filter: blur(3px);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+}
+.quest-tracker .qt-title {
+  font-size: 12px; color: #F7C8D8; letter-spacing: 1px;
+  margin-bottom: 3px;
+}
+.quest-tracker .qt-step {
+  font-size: 11px; color: #E8E0D8; opacity: .88; line-height: 1.45;
+}
+
+/* ===== 任务日志面板 ===== */
+.panel-quest { align-items: center; justify-content: center; }
+.panel-quest > .ov-head {
+  display: flex; padding: 0 0 12px 0;
+  width: min(760px, 90vw);
+  background: rgba(24,20,26,0.96);
+  border-radius: 6px 6px 0 0;
+  padding: 14px 18px 12px;
+}
+.questlist {
+  width: min(760px, 90vw);
+  max-height: 64vh; overflow-y: auto;
+  background: rgba(24,20,26,0.96);
+  border-radius: 0 0 6px 6px;
+  padding: 6px 18px 18px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.quest-empty {
+  padding: 28px 4px; text-align: center;
+  font-size: 12px; opacity: .5;
+}
+.quest-card {
+  border-left: 3px solid rgba(247,200,216,0.4);
+  background: rgba(255,255,255,0.035);
+  border-radius: 4px;
+  padding: 9px 12px 10px;
+}
+.quest-card.main { border-left-color: #F7C8D8; }
+.quest-card.side { border-left-color: rgba(232,194,90,0.55); }
+.q-title-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.q-tag {
+  font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  background: rgba(247,200,216,0.18); color: #F7C8D8;
+}
+.quest-card.side .q-tag { background: rgba(232,194,90,0.18); color: #E8C25A; }
+.q-title { font-size: 14px; color: #F3EBE4; letter-spacing: 1px; }
+.q-chapter { font-size: 10px; opacity: .5; margin-left: auto; }
+.q-brief { font-size: 11px; opacity: .72; line-height: 1.55; margin-bottom: 6px; }
+.q-steps { display: flex; flex-direction: column; gap: 3px; }
+.q-step { font-size: 11px; display: flex; gap: 6px; opacity: .85; }
+.q-step.done { opacity: .42; text-decoration: line-through; }
+.q-mark { width: 12px; flex: none; color: #8FD8A0; }
+.q-step.done .q-mark { color: #6FA87E; }
+.q-hint {
+  margin-top: 7px; padding-top: 6px;
+  border-top: 1px dashed rgba(255,255,255,0.1);
+  font-size: 10px; opacity: .6; line-height: 1.5;
+}
+.q-line-progress {
+  margin-top: 4px; text-align: center;
+  font-size: 10px; opacity: .45;
+}
 </style>
 </head>
 <body>

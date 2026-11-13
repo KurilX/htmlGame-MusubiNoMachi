@@ -80,6 +80,12 @@
         opened: opened,
         knots: knots
       },
+      // 任务状态必须存盘，否则读档后所有主线进度清零
+      // （之前完全没存，读档等于任务全部重来）
+      quest: (G.quest && G.quest.state) ? {
+        active: G.quest.state.active,
+        done: G.quest.state.done
+      } : null,
       stats: {
         kills: G.main._killCount || 0
       }
@@ -119,6 +125,13 @@
         var it = G.world.interactables.find(function (x) { return x.uid === uid; });
         if (it) it.done = true;
       });
+    }
+
+    // 恢复任务状态（与存盘对称）
+    if (G.quest && data.quest) {
+      G.quest.state.active = data.quest.active || {};
+      G.quest.state.done = data.quest.done || {};
+      if (G.quest.resetRuntime) G.quest.resetRuntime();
     }
     return true;
   };
