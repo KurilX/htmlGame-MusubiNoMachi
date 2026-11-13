@@ -74,17 +74,26 @@ async function main() {
   check('追踪 HUD 显示任务标题与步骤', !!hud.title && !!hud.step, hud.title + ' | ' + hud.step);
 
   // ---- 3. 任务日志面板（按 L）----
+  //
+  // 【改为轮询】原来按键后固定 sleep(500) 再断言。
+  // 线上版本加载更慢，按键时主循环可能还没消费 pressed 标记，
+  // 导致线上偶发失败（本地一直正常）。现在最多等 3 秒，一旦可见就继续。
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyL', key: 'l', windowsVirtualKeyCode: 76 });
   await sleep(120);
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyL', key: 'l', windowsVirtualKeyCode: 76 });
-  await sleep(500);
-  const panel = await cdp.eval(`(function(){
-    var p = G.ui.panels.quest;
-    return {
-      visible: p ? p.style.display !== 'none' : false,
-      cards: p ? p.querySelectorAll('.quest-card').length : 0
-    };
-  })()`);
+
+  let panel = { visible: false, cards: 0 };
+  for (let i = 0; i < 30; i++) {
+    await sleep(100);
+    panel = await cdp.eval(`(function(){
+      var p = G.ui.panels.quest;
+      return {
+        visible: p ? p.style.display !== 'none' : false,
+        cards: p ? p.querySelectorAll('.quest-card').length : 0
+      };
+    })()`);
+    if (panel.visible && panel.cards > 0) break;
+  }
   check('按 L 打开任务日志', panel.visible === true);
   check('日志里有任务卡片', panel.cards > 0, panel.cards + ' 张');
   await cdp.eval(`G.ui.closeAllPanels()`);
