@@ -12,10 +12,20 @@
 // 目标地址：默认本地 dev.html，也可传参测线上。
 const path = require('path');
 const { launchOwnChrome, sleep } = require('./cdp');
+
+// 【必须带 autostart】主菜单上线后，加载完不会直接进场景。
+// 传参测线上时 argv[2] 是原样使用的 —— 如果忘了带 autostart，
+// 页面会停在主菜单，所有"等世界构建"的断言全部超时。
+function ensureAuto(u) {
+  if (!u) return u;
+  if (u.indexOf('autostart=') >= 0) return u;
+  return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'autostart=1';
+}
+
 const ROOT = path.resolve(__dirname, '..');
 
-const TARGET_URL = process.argv[2] ||
-  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now());
+const TARGET_URL = ensureAuto(process.argv[2] ||
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now()));
 
 async function main() {
   const results = [];
@@ -135,14 +145,23 @@ async function main() {
   ];
 
   for (const d of dirs) {
-    // 【每次先把相机 yaw 归位】
-    // 这个测试对 camYaw 敏感：dir8 是"世界朝向相对相机"的映射，
-    // 相机一转，同一个移动方向的 dir8 就变了。
-    // 前面若按过 R/Q，yaw 会停在非 45° 的位置，断言就会误报。
+    // 【每次先把相机 yaw 归位，并清空残留按键】
+    //
+    // 1) 这个测试对 camYaw 敏感：dir8 是"世界朝向相对相机"的映射，
+    //    相机一转，同一个移动方向的 dir8 就变了。
+    // 2) 更要紧的是按键残留：前一轮的 keyUp 若丢失或被节流，
+    //    残留的方向键会与本轮按下的键组合成**对角方向**。
+    //
+    //    实测偶发的 dir8=3 就是这个原因 —— 按公式
+    //    dir8=3 对应 facing=180°，正是 W+D 的对角方向，
+    //    不是朝向算错，而是上一轮 D 没有释放干净。
     await cdp.eval(`(function(){
       G.camera.yaw = Math.PI * 0.25;
       G.camera.yawTarget = Math.PI * 0.25;
       G.camera.cam.updateMatrixWorld(true);
+      // 清空按键状态，避免上一轮残留造成对角移动
+      G.input.keys = {};
+      G.input.pressed = {};
       return 1;
     })()`);
     await sleep(200);

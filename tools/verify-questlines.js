@@ -6,10 +6,20 @@
 // 目标地址：默认本地 dev.html，也可传参测线上。
 const path = require('path');
 const { launchOwnChrome, sleep } = require('./cdp');
+
+// 【必须带 autostart】主菜单上线后，加载完不会直接进场景。
+// 传参测线上时 argv[2] 是原样使用的 —— 如果忘了带 autostart，
+// 页面会停在主菜单，所有"等世界构建"的断言全部超时。
+function ensureAuto(u) {
+  if (!u) return u;
+  if (u.indexOf('autostart=') >= 0) return u;
+  return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'autostart=1';
+}
+
 const ROOT = path.resolve(__dirname, '..');
 
-const TARGET_URL = process.argv[2] ||
-  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now());
+const TARGET_URL = ensureAuto(process.argv[2] ||
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now()));
 
 async function main() {
   const results = [];
