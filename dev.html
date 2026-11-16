@@ -472,6 +472,304 @@ canvas#gl {
   margin-top: 4px; text-align: center;
   font-size: 10px; opacity: .45;
 }
+
+/* =====================================================================
+   主菜单
+   ===================================================================== */
+.menu-root {
+  position: fixed; inset: 0;
+  z-index: 10000;
+  display: flex; align-items: center; justify-content: center;
+  /* 深紫渐变 + 一点暖色，比纯黑有层次 */
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(247,200,216,0.10), transparent 60%),
+    radial-gradient(ellipse at 50% 100%, rgba(127,176,105,0.08), transparent 55%),
+    #0A0810;
+  font-family: inherit;
+}
+
+.menu-panel {
+  width: min(560px, 92vw);
+  /* 面板要够高，否则设置页的存档管理被截断，玩家找不到
+     （第一次截图里只看到"存档管理"标题下面一条就被切了） */
+  height: min(760px, 90vh);
+  display: flex; flex-direction: column;
+}
+
+/* ---- 标题 ---- */
+.menu-head {
+  text-align: center;
+  margin-bottom: 26px;
+}
+.menu-title {
+  font-size: 42px; letter-spacing: 14px; text-indent: 14px;
+  color: #F7C8D8;
+  text-shadow: 0 0 24px rgba(247,200,216,0.35), 0 2px 4px rgba(0,0,0,0.6);
+  font-weight: 300;
+}
+.menu-sub {
+  margin-top: 6px;
+  font-size: 12px; letter-spacing: 5px; text-indent: 5px;
+  color: rgba(232,224,216,0.42);
+}
+
+/* ---- 内容区 ---- */
+.menu-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  gap: 9px;
+  padding: 2px 4px 8px;
+}
+/* 滚动条：默认的白色宽条和整体风格完全不搭 */
+.menu-body::-webkit-scrollbar { width: 6px; }
+.menu-body::-webkit-scrollbar-track { background: transparent; }
+.menu-body::-webkit-scrollbar-thumb {
+  background: rgba(247,200,216,0.22);
+  border-radius: 3px;
+}
+.menu-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(247,200,216,0.38);
+}
+
+/* ---- 主按钮 ---- */
+.menu-actions { display: flex; flex-direction: column; gap: 9px; }
+
+.menu-btn {
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 18px;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid rgba(247,200,216,0.16);
+  border-left: 3px solid rgba(247,200,216,0.30);
+  border-radius: 4px;
+  color: #E8E0D8;
+  font-size: 15px; letter-spacing: 3px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, transform .12s;
+  user-select: none;
+}
+.menu-btn:hover:not(.disabled),
+.menu-btn.focused:not(.disabled) {
+  background: rgba(247,200,216,0.13);
+  border-left-color: #F7C8D8;
+  transform: translateX(3px);
+}
+.menu-btn.disabled {
+  opacity: .38;
+  cursor: not-allowed;
+  border-left-color: rgba(255,255,255,0.12);
+}
+.menu-btn-label { flex: 1; }
+
+.menu-badge {
+  font-size: 10px; letter-spacing: 1px;
+  padding: 2px 8px; border-radius: 3px;
+  background: rgba(232,194,90,0.16);
+  color: #E8C25A;
+  border: 1px solid rgba(232,194,90,0.3);
+}
+.menu-btn-hint {
+  font-size: 11px; letter-spacing: 1px;
+  color: rgba(232,224,216,0.45);
+}
+.menu-version {
+  margin-top: 18px; text-align: center;
+  font-size: 10px; letter-spacing: 1px;
+  color: rgba(232,224,216,0.28);
+}
+
+/* ---- 视图小标题与返回 ---- */
+.menu-back {
+  font-size: 12px; letter-spacing: 2px;
+  color: rgba(247,200,216,0.62);
+  margin-bottom: 12px;
+  width: fit-content;
+  transition: color .15s;
+}
+.menu-back:hover { color: #F7C8D8; }
+
+.menu-h {
+  font-size: 16px; letter-spacing: 4px;
+  color: #F3EBE4;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+}
+.menu-h2 {
+  font-size: 12px; letter-spacing: 3px;
+  color: rgba(247,200,216,0.78);
+  margin: 14px 0 7px;
+}
+
+/* 存档管理标题行：左边标题、右边备份按钮，省一屏高度 */
+.mgr-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+}
+.mgr-head .menu-h2 { margin-bottom: 7px; }
+.mgr-actions { display: flex; gap: 6px; }
+
+/* ---- 存档槽位 ---- */
+.slot-list { display: flex; flex-direction: column; gap: 9px; }
+
+.slot-card {
+  padding: 12px 15px;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid rgba(247,200,216,0.14);
+  border-left: 3px solid rgba(247,200,216,0.28);
+  border-radius: 4px;
+  transition: background .15s, border-color .15s, transform .12s;
+  user-select: none;
+}
+.slot-card:not(.disabled):hover,
+.slot-card:not(.disabled).focused {
+  background: rgba(247,200,216,0.12);
+  border-left-color: #F7C8D8;
+  transform: translateX(3px);
+}
+.slot-card.disabled { opacity: .40; }
+
+.slot-head { display: flex; align-items: baseline; gap: 10px; }
+.slot-no {
+  font-size: 12px; letter-spacing: 2px;
+  color: rgba(247,200,216,0.72);
+}
+.slot-lv {
+  margin-left: auto;
+  font-size: 13px; color: #E8C25A; letter-spacing: 1px;
+}
+.slot-empty, .slot-corrupt {
+  margin-left: auto; font-size: 11px; letter-spacing: 1px;
+  color: rgba(232,224,216,0.42);
+}
+.slot-corrupt { color: #E05A4F; }
+
+.slot-meta { margin-top: 7px; font-size: 12px; color: #E8E0D8; line-height: 1.7; }
+.slot-time { font-size: 11px; color: rgba(232,224,216,0.46); }
+.slot-hint { margin-top: 6px; font-size: 11px; color: rgba(232,224,216,0.38); }
+.slot-warn {
+  margin-top: 8px; font-size: 11px;
+  color: #E8C25A;
+  padding: 4px 8px;
+  background: rgba(232,194,90,0.10);
+  border-radius: 3px;
+}
+
+.slot-confirm {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255,255,255,0.14);
+}
+.slot-confirm-q { font-size: 12px; color: #E8C25A; margin-bottom: 8px; }
+.slot-confirm-row { display: flex; gap: 8px; }
+
+/* ---- 按钮（危险 / 幽灵） ---- */
+.btn-danger, .btn-ghost {
+  padding: 7px 14px;
+  font-size: 12px; letter-spacing: 2px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s, border-color .15s;
+}
+.btn-danger {
+  background: rgba(224,90,79,0.16);
+  border: 1px solid rgba(224,90,79,0.5);
+  color: #FFC8C0;
+}
+.btn-danger:hover { background: rgba(224,90,79,0.28); }
+
+.btn-ghost {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.16);
+  color: #E8E0D8;
+}
+.btn-ghost:hover { background: rgba(255,255,255,0.10); }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+
+/* ---- 设置项 ---- */
+.set-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 7px 2px;
+}
+.set-label {
+  width: 78px; flex: none;
+  font-size: 12px; letter-spacing: 2px;
+  color: #E8E0D8;
+}
+.set-range {
+  flex: 1;
+  -webkit-appearance: none; appearance: none;
+  height: 3px;
+  background: rgba(247,200,216,0.22);
+  border-radius: 2px;
+  outline: none;
+}
+.set-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: #F7C8D8;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(247,200,216,0.5);
+}
+.set-val {
+  width: 40px; flex: none; text-align: right;
+  font-size: 11px; color: rgba(232,224,216,0.62);
+}
+.set-select {
+  flex: 1;
+  padding: 5px 8px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 3px;
+  color: #E8E0D8;
+  font-family: inherit; font-size: 12px;
+  cursor: pointer;
+}
+.set-note {
+  font-size: 10px; line-height: 1.5;
+  color: rgba(232,224,216,0.38);
+  padding: 2px 0 6px 90px;
+}
+
+/* ---- 存档管理 ---- */
+/* 做成三列紧凑排布：存档多时也不会把面板撑得过高 */
+.save-mgr {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.save-row {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 7px 9px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 3px;
+  font-size: 11px;
+}
+.save-row-name { color: rgba(247,200,216,0.72); letter-spacing: 1px; }
+.save-row-desc {
+  color: rgba(232,224,216,0.52);
+  font-size: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.save-row .btn-sm {
+  margin-top: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* 备份按钮行 */
+.set-row .btn-ghost { font-size: 11px; padding: 6px 12px; letter-spacing: 1px; }
+
+/* ---- 底部提示 ---- */
+.menu-foot {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 10px; letter-spacing: 1px;
+  color: rgba(232,224,216,0.24);
+}
 </style>
 </head>
 <body>
@@ -488,6 +786,7 @@ canvas#gl {
 <script src="vendor/three.min.js"></script>
 
 <script src="src/00-core.js"></script>
+<script src="src/05-menu.js"></script>
 <script src="src/data/skills.js"></script>
 <script src="src/data/items.js"></script>
 <script src="src/data/monsters.js"></script>

@@ -174,6 +174,93 @@
     catch (e) { return false; }
   };
 
+  /**
+   * 槽位摘要（主菜单用）。
+   *
+   * 只读 localStorage、不碰 G.player / G.world，
+   * 所以可以在世界构建完成之前调用 —— 主菜单正是这个场景。
+   */
+  S.summarize = function (slots) {
+    var list = slots || [1, 2, 3];
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var slot = list[i];
+      var raw = null;
+      try { raw = localStorage.getItem(PREFIX + slot); } catch (e) { raw = null; }
+
+      if (!raw) {
+        out.push({ slot: slot, exists: false });
+        continue;
+      }
+
+      var d = null;
+      try { d = JSON.parse(raw); } catch (e) { d = null; }
+      if (!d || !d.player) {
+        // 存档损坏：仍视为"存在"，但标出来让玩家知道
+        out.push({ slot: slot, exists: true, corrupt: true });
+        continue;
+      }
+
+      // 位置名：按坐标判断在哪个地区
+      var place = '旅の途中';
+      var px = d.player.position ? d.player.position.x : 0;
+      var pz = d.player.position ? d.player.position.z : 0;
+      if (G.terrain && G.terrain.regionAt) {
+        var region = G.terrain.regionAt(px, pz);
+        var names = { town: '結ノ町', field: '霞ヶ原', mountain: '神山', harbor: '湊町', beach: '渚' };
+        place = names[region] || place;
+      }
+
+      // 当前主线标题
+      var questTitle = '';
+      if (d.quest && d.quest.active) {
+        for (var qid in d.quest.active) {
+          var qdef = G.DATA.QUESTS && G.DATA.QUESTS[qid];
+          if (qdef) { questTitle = qdef.title; break; }
+        }
+      }
+
+      out.push({
+        slot: slot,
+        exists: true,
+        corrupt: false,
+        level: d.player.level || 1,
+        name: d.player.name || '旅人',
+        playedSec: d.playedSec || 0,
+        savedAt: d.savedAt || 0,
+        place: place,
+        gold: d.player.gold || 0,
+        questTitle: questTitle
+      });
+    }
+    return out;
+  };
+
+  /** 有没有任何存档（主菜单判断"继续游戏"是否可点） */
+  S.anySave = function (slots) {
+    var list = slots || [1, 2, 3];
+    for (var i = 0; i < list.length; i++) {
+      if (S.hasSave(list[i])) return true;
+    }
+    return false;
+  };
+
+  /** 最近一次保存的槽位（"继续游戏"默认选它） */
+  S.latestSlot = function (slots) {
+    var list = slots || [1, 2, 3];
+    var best = null, bestAt = -1;
+    for (var i = 0; i < list.length; i++) {
+      var raw = null;
+      try { raw = localStorage.getItem(PREFIX + list[i]); } catch (e) { raw = null; }
+      if (!raw) continue;
+      var d = null;
+      try { d = JSON.parse(raw); } catch (e) { d = null; }
+      var at = d && d.savedAt ? d.savedAt : 0;
+      if (at > bestAt) { bestAt = at; best = list[i]; }
+    }
+    return best;
+  };
+
   // ---------- 导出/导入 ----------
   S.exportJSON = function () {
     var data = S.serialize();
