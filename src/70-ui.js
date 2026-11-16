@@ -368,9 +368,37 @@
   // =====================================================================
   
   var _trackLastText = null;
+
+  /**
+   * 强制追踪 HUD 下一帧重绘。
+   * 用在状态切换时：开场引导结束、接任务、交任务等。
+   * 因为 updateQuestTracker 用 _trackLastText 做缓存，
+   * 状态变了但文本恰好相同时不会重绘。
+   */
+  U.invalidateTracker = function () {
+    _trackLastText = undefined;
+  };
   
   U.updateQuestTracker = function () {
     if (!U.trackerBox || !G.quest) return;
+
+    // 【开场引导优先】
+    // 开场阶段（还没接任何任务）时，追踪 HUD 显示引导目标
+    // 「序章｜去找千絵」，而不是空着让玩家不知道该干嘛。
+    if (G.intro && G.intro.currentObjective) {
+      var obj = G.intro.currentObjective();
+      if (obj) {
+        var ofull = '序章｜' + obj;
+        if (ofull !== _trackLastText) {
+          _trackLastText = ofull;
+          U.trackerBox.style.display = '';
+          U.trackerTitle.textContent = '序章';
+          U.trackerStep.textContent = obj;
+        }
+        return;
+      }
+    }
+
     var next = G.quest.nextStep ? G.quest.nextStep() : null;
     var def = G.quest.tracked ? G.quest.tracked() : null;
     

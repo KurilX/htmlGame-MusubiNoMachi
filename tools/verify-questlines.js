@@ -158,6 +158,9 @@ async function main() {
 
   // ---- 5. 地区进入提示 ----
   const hint = await cdp.eval(`(function(){
+    // 开场引导进行中时，tickRegion 会静默返回（避免与开场旁白重复剧透）。
+    // 这里测的是"地区提示"功能本身，所以先把开场推到完成态。
+    if (G.intro) { G.intro.stage = 3; G.intro.objective = null; }
     G.quest.resetRegionSeen();
     G.quest.state.active = {};
     G.quest.state.done = {};

@@ -473,7 +473,7 @@ canvas#gl {
   font-size: 10px; opacity: .45;
 }
 </style>
-<!-- 构建产物：2026-11-13T09:25:10.134Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-16T05:54:25.730Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -10865,6 +10865,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       collectProgress: {}
     };
     G.ui.toast('接受任务：' + def.title, 2200);
+    if (G.ui.invalidateTracker) G.ui.invalidateTracker();
     G.bus.emit('quest:started', id);
     return true;
   };
@@ -11203,6 +11204,20 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   //
   // 这样加新任务只需写数据，不用改对话脚本。
   Q.offerFromNpc = function (npcId) {
+    // 【先检查这个 NPC 是否刚在同一段对话里派过任务】
+    //
+    // 踩过的坑：所有 NPC 的对话 onEnd 都显式写了 `quest.start('xxx')`，
+    // 而 onDialogEnd 之后又会调用这里。结果玩家和千絵说完话，
+    // 一下子接了两条任务（town_01 + town_02）——
+    // 因为 onEnd 接了 town_01，town_01 完成链立刻自动接 town_02，
+    // 然后这里又接了一次 town_02。
+    //
+    // 正确语义：如果该 NPC 已经有**进行中**的任务，说明已经派过了，不再派。
+    for (var aid in Q.state.active) {
+      var adef = G.DATA.QUESTS[aid];
+      if (adef && adef.giver === npcId) return null;
+    }
+
     // 找出所有 giver === npcId、未接也未完成的、并且没有前置任务的
     var candidates = [];
     for (var id in G.DATA.QUESTS) {
@@ -11262,6 +11277,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
   Q.tickRegion = function (dt, player) {
     if (!player || !G.terrain || !G.terrain.regionAt) return;
+
+    // 开场引导进行中时不要弹地区提示。
+    // 开场旁白已经说了"前面有个人在等你"，再来一条
+    // 「結ノ町 —— 这里有事找你。去和「千絵」说话」就是重复剧透。
+    if (G.intro && (G.intro.stage === 1 || G.intro.stage === 2)) return;
+
     regionTimer -= dt;
     if (regionTimer > 0) return;
     regionTimer = REGION_CHECK_INTERVAL;
@@ -11302,6 +11323,183 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   Q.resetRegionSeen = function () {
     regionSeen = {};
     regionTimer = 0;
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/62-intro.js ==== -->
+<script>
+/* 62-intro.js — 开场引导
+ *
+ * 【为什么需要这个文件】
+ * 之前为了让玩家"不用先找 NPC 就知道干什么"，我在开局直接
+ * `G.quest.start('town_01')` 自动接第一个任务。
+ *
+ * 这是个设计错误：玩家一睁眼就多了个「击退鬼火」的目标，
+ * 既没有开场、也没见过千絵、更不知道自己是誰。
+ * 跳过剧情直接给任务单，等于把 RPG 的入口砍掉了。
+ *
+ * 【现在的做法】三层引导，**不让玩家凭空接任务**：
+ *
+ *  1) 开场独白（纯旁白，不接任务）
+ *     出生时黑屏渐入 + 三行旁白，交代"你是谁、这是哪、你为什么在这"。
+ *
+ *  2) 引导目标：去找千絵（reach 型软目标，不占任务栏）
+ *     追踪 HUD 显示「去鸟居下找千絵」，玩家不会两眼一抹黑。
+ *
+ *  3) 走到千絵面前 → 自动触发对话 → 对话结束才接第一个任务
+ *     任务由剧情带出，不是系统硬塞。
+ *
+ * 只有**全新存档**才走这套流程（读档/已完成过的人不重复看）。
+ */
+(function (G) {
+  'use strict';
+
+  var I = G.intro = {};
+
+  // 当前阶段
+  //   0 = 未开始
+  //   1 = 开场独白中
+  //   2 = 等待玩家走到千絵面前
+  //   3 = 已完成（不再干预）
+  I.stage = 0;
+
+  // 引导目标（不写进任务系统，只驱动追踪 HUD）
+  I.objective = null;
+
+  // 千絵触发半径
+  var CHIE_RADIUS = 3.2;
+
+  // 轮询节流
+  var pollTimer = 0;
+  var POLL_INTERVAL = 0.3;
+
+  // 开场旁白
+  var OPENING_LINES = [
+    '（你在一座鸟居下醒来。不知道躺了多久。）',
+    '（手里握着一枚绳结。你不记得是谁给的。）',
+    '（前面有个人在等你。她一直在看你。）'
+  ];
+
+  /**
+   * 是否需要播开场。
+   * 只有"全新存档"（没有任何任务进度）才播。
+   */
+  I.shouldPlay = function () {
+    if (!G.quest) return false;
+    for (var a in G.quest.state.active) { if (a) return false; }
+    for (var d in G.quest.state.done) { if (d) return false; }
+    return true;
+  };
+
+  /**
+   * 播开场独白。
+   * 用对话系统播（但 speaker 为空 = 旁白），结束后不接任务，
+   * 只把引导目标设为"去找千絵"。
+   */
+  I.playOpening = function () {
+    if (I.stage !== 0) return;
+    I.stage = 1;
+
+    // 黑屏渐入：先盖一层黑，再淡出，让"醒来"有过程
+    I._fadeIn(function () {
+      if (G.dlg) {
+        G.dlg.start(null, {
+          id: 'd_opening',
+          speaker: '',
+          lines: OPENING_LINES,
+          onEnd: function () {
+            I.stage = 2;
+            I.objective = '去找千絵';
+            if (G.ui.invalidateTracker) G.ui.invalidateTracker();
+            G.ui.toast('走到鸟居下的千絵面前', 3600);
+          }
+        });
+      } else {
+        // 对话系统不可用时降级：直接进阶段 2
+        I.stage = 2;
+        I.objective = '去找千絵';
+      }
+    });
+  };
+
+  /** 黑屏渐入 */
+  I._fadeIn = function (done) {
+    var ov = document.getElementById('introFade');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'introFade';
+      ov.style.cssText = [
+        'position:fixed', 'inset:0', 'background:#0A0810',
+        'z-index:9000', 'pointer-events:none',
+        'opacity:1', 'transition:opacity 1.6s ease-out'
+      ].join(';');
+      document.body.appendChild(ov);
+    }
+    ov.style.opacity = '1';
+
+    // 等一帧让初始 opacity 生效，再淡出
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        ov.style.opacity = '0';
+        setTimeout(function () {
+          // 淡出完成后再开对话，玩家能看清画面
+          if (ov.parentNode) ov.parentNode.removeChild(ov);
+          if (done) done();
+        }, 1700);
+      });
+    });
+  };
+
+  /**
+   * 每帧调用：检测玩家是否走到千絵面前。
+   * 到了就自动触发对话（不用按 E，避免玩家不知道该按什么）。
+   */
+  I.update = function (dt, player) {
+    if (I.stage !== 2 || !player) return;
+
+    pollTimer -= dt;
+    if (pollTimer > 0) return;
+    pollTimer = POLL_INTERVAL;
+
+    // 对话中不触发
+    if (G.dlg && G.dlg.active) return;
+
+    var chie = (G.world.npcs || []).find(function (n) {
+      return n.def && n.def.id === 'npc_chie';
+    });
+    if (!chie) return;
+
+    var dx = chie.x - player.x;
+    var dz = chie.z - player.z;
+    if (dx * dx + dz * dz > CHIE_RADIUS * CHIE_RADIUS) return;
+
+    // 到位了：自动开对话，任务由对话的 onEnd 派发
+    I.stage = 3;
+    I.objective = null;
+    if (G.ui.invalidateTracker) G.ui.invalidateTracker();
+
+    if (G.dlg) {
+      G.dlg.start(chie, G.DATA.DIALOGUES['d_chie_intro']);
+    } else if (G.quest) {
+      // 对话系统异常时的兜底：至少把任务接上
+      G.quest.start('town_01');
+    }
+  };
+
+  /** 追踪 HUD 用：开场引导目标（优先级高于任务） */
+  I.currentObjective = function () {
+    return I.objective;
+  };
+
+  /** 重置（读档到另一个存档时用） */
+  I.reset = function () {
+    I.stage = 0;
+    I.objective = null;
+    pollTimer = 0;
+    var ov = document.getElementById('introFade');
+    if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
   };
 
 })(window.G = window.G || {});
@@ -11679,9 +11877,37 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   // =====================================================================
   
   var _trackLastText = null;
+
+  /**
+   * 强制追踪 HUD 下一帧重绘。
+   * 用在状态切换时：开场引导结束、接任务、交任务等。
+   * 因为 updateQuestTracker 用 _trackLastText 做缓存，
+   * 状态变了但文本恰好相同时不会重绘。
+   */
+  U.invalidateTracker = function () {
+    _trackLastText = undefined;
+  };
   
   U.updateQuestTracker = function () {
     if (!U.trackerBox || !G.quest) return;
+
+    // 【开场引导优先】
+    // 开场阶段（还没接任何任务）时，追踪 HUD 显示引导目标
+    // 「序章｜去找千絵」，而不是空着让玩家不知道该干嘛。
+    if (G.intro && G.intro.currentObjective) {
+      var obj = G.intro.currentObjective();
+      if (obj) {
+        var ofull = '序章｜' + obj;
+        if (ofull !== _trackLastText) {
+          _trackLastText = ofull;
+          U.trackerBox.style.display = '';
+          U.trackerTitle.textContent = '序章';
+          U.trackerStep.textContent = obj;
+        }
+        return;
+      }
+    }
+
     var next = G.quest.nextStep ? G.quest.nextStep() : null;
     var def = G.quest.tracked ? G.quest.tracked() : null;
     
@@ -12797,19 +13023,23 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     // 任务/对话
     if (G.quest) G.quest.init();
     if (G.dlg) G.dlg.init();
-
-    // 新手引导：没有任何进行中/已完成任务时，自动接初始地主线第一章。
-    // 这样玩家一进游戏就知道该干什么，不用先去找 NPC 才知道。
-    if (G.quest) {
-      var hasAny = false;
-      for (var qk in G.quest.state.active) { hasAny = true; break; }
-      if (!hasAny) {
-        for (var dk in G.quest.state.done) { hasAny = true; break; }
-      }
-      if (!hasAny) {
-        G.quest.start('town_01');
+    if (G.intro) {
+      G.intro.reset();
+      // 【不要在开局直接塞任务】
+      //
+      // 之前这里写的是 `G.quest.start('town_01')` —— 玩家一睁眼就多了个
+      // 「击退鬼火」的目标，既没开场、也没见过千絵、更不知道自己是誰。
+      // 等于把 RPG 的入口砍掉了。
+      //
+      // 现在走 G.intro：
+      //   黑屏渐入 → 三行旁白交代身份与处境 → 引导目标「去找千絵」
+      //   → 走到千絵面前自动触发对话 → 对话结束才由剧情带出第一个任务。
+      if (G.intro.shouldPlay()) {
+        G.intro.playOpening();
+      } else if (G.quest) {
+        // 读档或已有进度：不播开场，但提醒一下目标在哪
         setTimeout(function () {
-          G.ui.toast('按 L 查看手账，右上角会提示当前目标', 4200);
+          G.ui.toast('按 L 查看手账，右上角显示当前目标', 3600);
         }, 1200);
       }
     }
@@ -12948,6 +13178,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     // ---- 地区进入提示 ----
     // 第一次走进有主线的地区时，提示"去和谁说话"，帮助玩家发现新主线。
     if (G.quest && G.quest.tickRegion) G.quest.tickRegion(dt, st);
+
+    // ---- 开场引导 ----
+    // 阶段 2 时检测玩家是否走到千絵面前，到了自动触发对话。
+    if (G.intro && G.intro.update) G.intro.update(dt, st);
 
     // ---- 副本推进 ----
     if (G.dungeon && G.dungeon.active) {
