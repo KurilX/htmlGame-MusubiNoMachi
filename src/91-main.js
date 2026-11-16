@@ -57,19 +57,23 @@
     // 任务/对话
     if (G.quest) G.quest.init();
     if (G.dlg) G.dlg.init();
-
-    // 新手引导：没有任何进行中/已完成任务时，自动接初始地主线第一章。
-    // 这样玩家一进游戏就知道该干什么，不用先去找 NPC 才知道。
-    if (G.quest) {
-      var hasAny = false;
-      for (var qk in G.quest.state.active) { hasAny = true; break; }
-      if (!hasAny) {
-        for (var dk in G.quest.state.done) { hasAny = true; break; }
-      }
-      if (!hasAny) {
-        G.quest.start('town_01');
+    if (G.intro) {
+      G.intro.reset();
+      // 【不要在开局直接塞任务】
+      //
+      // 之前这里写的是 `G.quest.start('town_01')` —— 玩家一睁眼就多了个
+      // 「击退鬼火」的目标，既没开场、也没见过千絵、更不知道自己是誰。
+      // 等于把 RPG 的入口砍掉了。
+      //
+      // 现在走 G.intro：
+      //   黑屏渐入 → 三行旁白交代身份与处境 → 引导目标「去找千絵」
+      //   → 走到千絵面前自动触发对话 → 对话结束才由剧情带出第一个任务。
+      if (G.intro.shouldPlay()) {
+        G.intro.playOpening();
+      } else if (G.quest) {
+        // 读档或已有进度：不播开场，但提醒一下目标在哪
         setTimeout(function () {
-          G.ui.toast('按 L 查看手账，右上角会提示当前目标', 4200);
+          G.ui.toast('按 L 查看手账，右上角显示当前目标', 3600);
         }, 1200);
       }
     }
@@ -208,6 +212,10 @@
     // ---- 地区进入提示 ----
     // 第一次走进有主线的地区时，提示"去和谁说话"，帮助玩家发现新主线。
     if (G.quest && G.quest.tickRegion) G.quest.tickRegion(dt, st);
+
+    // ---- 开场引导 ----
+    // 阶段 2 时检测玩家是否走到千絵面前，到了自动触发对话。
+    if (G.intro && G.intro.update) G.intro.update(dt, st);
 
     // ---- 副本推进 ----
     if (G.dungeon && G.dungeon.active) {

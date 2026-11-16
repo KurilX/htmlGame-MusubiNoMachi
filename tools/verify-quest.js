@@ -49,18 +49,51 @@ async function main() {
   await sleep(2000);
 
   // ---- 1. 开局自动接主线（新手引导）----
+  // ---- 1. 开局状态 ----
+  //
+  // 【规则已变更】之前是"开局自动接 town_01"，但那是设计错误：
+  // 玩家一睁眼就多个任务、没开场、没见过 NPC。
+  // 现在改由 G.intro 播开场旁白 → 引导去找千絵 → 对话结束才接任务。
+  // 所以这里断言的是**开局没有任务**，开场引导另由 verify-intro.js 覆盖。
   const auto = await cdp.eval(`(function(){
     return {
       active: Object.keys(G.quest.state.active),
       tracked: G.quest.tracked() ? G.quest.tracked().title : null,
+      next: G.quest.nextStep() ? G.quest.nextStep().step.text : null,
+      introStage: G.intro ? G.intro.stage : -1
+    };
+  })()`);
+  check('开局不自动接任务（由开场剧情带出）', auto.active.length === 0,
+    auto.active.length === 0 ? '任务数 0，开场 stage=' + auto.introStage : '异常: ' + auto.active.join(','));
+
+  // ---- 1b. 手动接取后，追踪目标必须正确 ----
+  // 前面那条断言"开局没任务"之后，这里主动接一条，
+  // 以验证 tracked / nextStep / 追踪 HUD 这套机制本身是好的。
+  await cdp.eval(`G.quest.start('town_01')`);
+  await sleep(300);
+
+  const tracked = await cdp.eval(`(function(){
+    return {
+      title: G.quest.tracked() ? G.quest.tracked().title : null,
       next: G.quest.nextStep() ? G.quest.nextStep().step.text : null
     };
   })()`);
-  check('开局自动接主线（无需找 NPC）', auto.active.length === 1 && auto.active[0] === 'town_01',
-    auto.active.join(','));
-  check('追踪目标已确定', !!auto.tracked && !!auto.next, auto.tracked + ' / ' + auto.next);
+  check('接取后追踪目标已确定', !!tracked.title && !!tracked.next,
+    tracked.title + ' / ' + tracked.next);
 
   // ---- 2. 追踪 HUD ----
+  //
+  // 开场引导进行中时，追踪 HUD 会优先显示「序章｜去找千絵」，
+  // 而不是任务标题。这里测的是任务追踪，所以先把开场推到完成态。
+  await cdp.eval(`(function(){
+    if (G.intro) { G.intro.stage = 3; G.intro.objective = null; }
+    return 1;
+  })()`);
+  await sleep(400);
+
+  // 触发一次追踪刷新（内容缓存在 _trackLastText 里，状态变了要让它重绘）
+  await cdp.eval(`(function(){ G.ui.invalidateTracker(); return 1; })()`);
+
   const hud = await cdp.eval(`(function(){
     var box = G.ui.trackerBox;
     return {

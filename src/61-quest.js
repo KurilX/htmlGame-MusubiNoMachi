@@ -23,6 +23,7 @@
       collectProgress: {}
     };
     G.ui.toast('接受任务：' + def.title, 2200);
+    if (G.ui.invalidateTracker) G.ui.invalidateTracker();
     G.bus.emit('quest:started', id);
     return true;
   };
@@ -361,6 +362,20 @@
   //
   // 这样加新任务只需写数据，不用改对话脚本。
   Q.offerFromNpc = function (npcId) {
+    // 【先检查这个 NPC 是否刚在同一段对话里派过任务】
+    //
+    // 踩过的坑：所有 NPC 的对话 onEnd 都显式写了 `quest.start('xxx')`，
+    // 而 onDialogEnd 之后又会调用这里。结果玩家和千絵说完话，
+    // 一下子接了两条任务（town_01 + town_02）——
+    // 因为 onEnd 接了 town_01，town_01 完成链立刻自动接 town_02，
+    // 然后这里又接了一次 town_02。
+    //
+    // 正确语义：如果该 NPC 已经有**进行中**的任务，说明已经派过了，不再派。
+    for (var aid in Q.state.active) {
+      var adef = G.DATA.QUESTS[aid];
+      if (adef && adef.giver === npcId) return null;
+    }
+
     // 找出所有 giver === npcId、未接也未完成的、并且没有前置任务的
     var candidates = [];
     for (var id in G.DATA.QUESTS) {
@@ -420,6 +435,12 @@
 
   Q.tickRegion = function (dt, player) {
     if (!player || !G.terrain || !G.terrain.regionAt) return;
+
+    // 开场引导进行中时不要弹地区提示。
+    // 开场旁白已经说了"前面有个人在等你"，再来一条
+    // 「結ノ町 —— 这里有事找你。去和「千絵」说话」就是重复剧透。
+    if (G.intro && (G.intro.stage === 1 || G.intro.stage === 2)) return;
+
     regionTimer -= dt;
     if (regionTimer > 0) return;
     regionTimer = REGION_CHECK_INTERVAL;
