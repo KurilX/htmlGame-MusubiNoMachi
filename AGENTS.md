@@ -21,6 +21,7 @@ node tools/verify-quest.js     # 任务系统 19 项
 node tools/verify-perf.js      # 性能 6 项
 node tools/verify-dungeon.js   # 副本系统 23 项
 node tools/verify-questlines.js # 地区主线 17 项
+node tools/verify-intro.js    # 开场引导 24 项
 node tools/shot-natural.js <x> <z> out.png   # 用游戏相机截图
 ```
 
@@ -77,13 +78,29 @@ tools/              CDP 验收与截图脚本
 **任务系统（結ノ町主线 6 章 + 3 条支线 + 新手引导 + 任务日志 UI）**、
 **副本系统（独立场景切换 + 3 副本 + 2 个新 Boss）**、
 **4 条地区主线（結ノ町6章 / 神山5章 / 湊町5章 / 渚5章，共 21 章）**、
-**城镇扩建（60×44）+ 10 条支线 + 14 个 NPC**。
+**城镇扩建（60×44）+ 10 条支线 + 14 个 NPC**、
+**开场演出（黑屏渐入 + 旁白 + 引导找 NPC → 对话后接任务）**。
 
 **未完成**：
 - 副本内可以补机关、宝箱、中途存档点。
 - `docs/ISSUE-blue-region.md` 记录的蓝色区域视觉缺陷。
 
 **已知性能问题**：线上首访启动约 25 秒（本地 4~6 秒），瓶颈在 `W.build` 的物件构建与 shader 编译。
+
+## 开场引导约定（改开头流程时必看）
+
+- 入口在 `src/62-intro.js`（`G.intro`），主流程里由 `G.intro.shouldPlay()` 决定是否播
+- **绝不在开局直接 `G.quest.start(...)`**。
+  曾为了让玩家"不用找 NPC"，在 `91-main.js` 里写 `G.quest.start('town_01')`，
+  结果玩家一睁眼就多个任务、没开场、没见过 NPC —— 等于把 RPG 的入口砍掉了。
+  用户明确指出这是错的。
+- 三阶段：**旁白（stage 1）→ 引导目标「序章/去找千絵」（stage 2）→ 走到面前自动对话（stage 3）**
+  任务只能在阶段 3 的对话 `onEnd` 里由剧情带出
+- 只对全新存档生效：`shouldPlay()` 检查 `active` 与 `done` 都为空
+- `tickRegion` 在 intro stage 1/2 时必须静默，否则地区提示会与旁白重复剧透
+- `offerFromNpc` 会检查该 NPC 是否已有进行中任务 ——
+  否则对话 `onEnd` 的 `start` 与它叠加会导致接两条任务
+- 追踪 HUD 的 `_trackLastText` 缓存会阻止重绘；状态切换时调 `U.invalidateTracker()`
 
 ## 任务系统约定（加新城镇主线时看这里）
 
@@ -131,3 +148,7 @@ tools/              CDP 验收与截图脚本
   曾误写成按到边界距离做 smoothstep，导致城镇靠边处地形只拉平一部分（NPC 悬空）。
 - **`regionAt` 按归一化椭圆距离判定**，城镇椭圆必须覆盖整个 TOWN 矩形（含四角），
   否则四角附近的 NPC 会被判到相邻地区。
+- **测试会固化错误设计**。`verify-quest` 里曾有一条「开局自动接主线（无需找 NPC）」，
+  它忠实地保护了一个错误行为 —— 我改掉自动接任务后，测试反而红了。
+  改设计时必须同步改断言，否则测试会成为错误的守门人；断言描述的是**期望**，
+  而不是"当时代码碰巧怎么做的"。
