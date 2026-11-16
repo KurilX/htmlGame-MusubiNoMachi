@@ -16,6 +16,16 @@
 //  - 技能带突进，事后玩家位置会变；期望方向必须用**施放瞬间**的位置算。
 const path = require('path');
 const { launchOwnChrome, sleep } = require('./cdp');
+
+// 【必须带 autostart】主菜单上线后，加载完不会直接进场景。
+// 传参测线上时 argv[2] 是原样使用的 —— 如果忘了带 autostart，
+// 页面会停在主菜单，所有"等世界构建"的断言全部超时。
+function ensureAuto(u) {
+  if (!u) return u;
+  if (u.indexOf('autostart=') >= 0) return u;
+  return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'autostart=1';
+}
+
 const ROOT = path.resolve(__dirname, '..');
 
 // 目标地址：默认本地 dev.html（开发时用），也可传参测线上：
@@ -24,8 +34,8 @@ const ROOT = path.resolve(__dirname, '..');
 // 【踩过的坑】之前这里把 URL 写死成 dev.html，传参被静默忽略 ——
 // 我一度以为"线上瞄准已验证"，实际测的还是本地文件。
 // 现在显式支持 argv[2]，并把真实加载的地址打印出来。
-const TARGET_URL = process.argv[2] ||
-  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now());
+const TARGET_URL = ensureAuto(process.argv[2] ||
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now()));
 
 (async () => {
   console.log('目标地址: ' + TARGET_URL + '\n');
