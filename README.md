@@ -99,6 +99,14 @@
 - **地区进入提示**：第一次走进有主线的地区时，提示「这里有事找你。去和「XX」说话」
 - 加新地区只需在 `src/data/quests.js` 加数据 + 在 `G.DATA.QUEST_LINES` 注册一条链
 
+**主菜单**
+- **四个入口**：继续游戏 / 开始新游戏 / 联网游戏（占位·未开放）/ 设置
+- **存档子菜单**：3 个槽位，显示等级 · 地区 + 当前主线 · 时长 · 保存时间 · 金币；
+  新游戏覆盖已有存档需二次确认
+- **设置**：音量、画质（高 1152×648 / 中 864×486 / 低 640×360）、
+  存档删除、JSON 导出导入
+- 游戏内按 `Esc` 返回主菜单（优先级：关对话 > 关面板 > 回菜单），返回时自动存档
+
 **系统**
 - 3 槽存档 + 自动存 + JSON 导入导出（任务状态一并存盘）
 - 程序化 BGM（都节音阶）+ 18 个合成音效
@@ -150,6 +158,7 @@ node tools/verify-aim.js      # 瞄准 4 项
 node tools/verify-perf.js     # 性能 6 项
 node tools/verify-quest.js    # 任务系统 19 项
 node tools/verify-intro.js    # 开场引导 24 项
+node tools/verify-menu.js     # 主菜单 37 项
 node tools/verify-dungeon.js  # 副本系统 23 项
 node tools/verify-questlines.js # 地区主线 17 项
 # 以上除 verify-online 外都支持传入 URL 测线上：

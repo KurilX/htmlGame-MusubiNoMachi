@@ -3,7 +3,7 @@
 ## 这是什么
 
 单文件、双击即玩的**和风幻想动作 RPG**。零依赖、零网络、零外部资源：
-整个游戏就是一个 `game.html`（约 1.10 MB，内联全部代码与程序化贴图）。
+整个游戏就是一个 `game.html`（约 1.12 MB，内联全部代码与程序化贴图）。
 不是 MMO，是"有 MMO 世界结构感的单人动作 RPG"。
 
 线上：https://kurilx.github.io/htmlGame-MusubiNoMachi/
@@ -22,6 +22,7 @@ node tools/verify-perf.js      # 性能 6 项
 node tools/verify-dungeon.js   # 副本系统 23 项
 node tools/verify-questlines.js # 地区主线 17 项
 node tools/verify-intro.js    # 开场引导 24 项
+node tools/verify-menu.js     # 主菜单 37 项
 node tools/shot-natural.js <x> <z> out.png   # 用游戏相机截图
 ```
 
@@ -71,7 +72,7 @@ tools/              CDP 验收与截图脚本
    单独跑每个脚本都绿、批量跑却红，先怀疑内存压力而不是代码。
 
 
-## 当前状态（2026-11-13）
+## 当前状态（2026-11-16）
 
 **已完成**：战斗手感、5.5 头身角色、彩色阴影、程序化材质、多区域地形、
 280×270 单张连续大世界（5 个可玩地区）、性能优化（draw calls 1481→883）、
@@ -79,13 +80,31 @@ tools/              CDP 验收与截图脚本
 **副本系统（独立场景切换 + 3 副本 + 2 个新 Boss）**、
 **4 条地区主线（結ノ町6章 / 神山5章 / 湊町5章 / 渚5章，共 21 章）**、
 **城镇扩建（60×44）+ 10 条支线 + 14 个 NPC**、
-**开场演出（黑屏渐入 + 旁白 + 引导找 NPC → 对话后接任务）**。
+**开场演出（黑屏渐入 + 旁白 + 引导找 NPC → 对话后接任务）**、
+**主菜单 + 存档子菜单（启动拆成 bootShell / startGame 两段）**。
 
 **未完成**：
 - 副本内可以补机关、宝箱、中途存档点。
 - `docs/ISSUE-blue-region.md` 记录的蓝色区域视觉缺陷。
 
 **已知性能问题**：线上首访启动约 25 秒（本地 4~6 秒），瓶颈在 `W.build` 的物件构建与 shader 编译。
+
+## 主菜单约定（改启动/存档流程时必看）
+
+- 入口 `src/05-menu.js`（`G.menu`），DOM 在 `document.body` 上，z-index 10000
+- **启动拆成两段**：`G.bootShell()`（渲染器+相机+输入+音频+菜单，立刻可用）
+  与 `G.startGame({slot,isNew,data})`（构建世界+玩家+UI+开场）
+  - 为什么拆：`world.build()` 实测 966ms，点「设置」不该等它；存档操作也不依赖世界
+- **`?autostart=1` 跳过菜单**：9 个既有验收脚本假设"加载完即在场景里"，
+  不跳过会全部卡在等世界构建。菜单自身行为由 `verify-menu.js` 覆盖
+- 菜单期间必须 `G.input.setEnabled(false)`，否则按 WASD 会让角色跑
+  （世界可能还没构建，直接报错）
+- 主循环 `step()` 里有 `inMenu` 守卫；`render()` 在菜单且未进游戏时清屏
+  （此时 `G.world.scene` 可能是 undefined）
+- `G.save.summarize()` 只读 localStorage、不碰 `G.player`/`G.world`，
+  所以能在世界构建前调用 —— 主菜单正是这个场景
+- 画质切换只在 `pixels.init` 时读一次（内部分辨率固化成离屏 RT 尺寸），
+  所以改画质必须重新进入游戏
 
 ## 开场引导约定（改开头流程时必看）
 
