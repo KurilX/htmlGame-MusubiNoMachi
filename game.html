@@ -771,7 +771,7 @@ canvas#gl {
   color: rgba(232,224,216,0.24);
 }
 </style>
-<!-- 构建产物：2026-11-16T06:32:05.025Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-16T09:12:12.083Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -6977,15 +6977,25 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     return ((idx % 8) + 8) % 8;
   };
 
-  /** 简版：直接给世界朝向角（atan2(dz,dx)）和相机 yaw */
+  /** 简版：直接给世界朝向角（atan2(dx, dz)）和相机 yaw */
   S.dir8FromAngle = function (worldAngle, cameraYaw) {
-    // 世界角度：0 = +x，PI/2 = +z
-    // chibi 的 dir 0 = 面向相机 = 朝向 -z 方向（远离世界原点朝向相机）
-    // 相机在 yaw 方向看向场景，所以"面向相机"的世界方向 = yaw + PI
-    var faceCamAngle = cameraYaw + Math.PI;
-    var rel = G.M.angleDelta(faceCamAngle, worldAngle);  // -PI..PI
-    var idx = Math.round(rel / (Math.PI / 4));
-    return ((idx % 8) + 8) % 8;
+    // 【2026-11 修复：角色朝向与移动方向差 180°】
+    //
+    // 原来这里写的是：
+    //     var faceCamAngle = cameraYaw + Math.PI;
+    //     var rel = G.M.angleDelta(faceCamAngle, worldAngle);
+    //     var idx = Math.round(rel / (Math.PI / 4));
+    //
+    // 多加了那个 PI，导致整个朝向反向：
+    //   按 W（走向屏幕上方、背对镜头）→ dir8=0（正面帧，能看到脸）
+    //   按 S（走向屏幕下方、面向镜头）→ dir8=4（背面帧，看到后脑勺）
+    // 玩家看到的就是"倒着走"，但很难立刻说清哪里不对。
+    //
+    // 几何推导：相机位于玩家的 (sin yaw, cos yaw) 方向，
+    // 而世界角用 atan2(x, z)，所以"玩家朝向相机"的世界角恰好就是 yaw。
+    // 下面直接复用 dirToCamera —— 那一个的推导是对的，
+    // 让两处共用同一实现，避免以后再次分叉漂移。
+    return S.dirToCamera(worldAngle, cameraYaw);
   };
 
   /**
