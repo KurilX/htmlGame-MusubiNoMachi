@@ -25,7 +25,7 @@ const ROOT = path.resolve(__dirname, '..');
 // 我一度以为"线上瞄准已验证"，实际测的还是本地文件。
 // 现在显式支持 argv[2]，并把真实加载的地址打印出来。
 const TARGET_URL = process.argv[2] ||
-  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now());
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now());
 
 (async () => {
   console.log('目标地址: ' + TARGET_URL + '\n');

@@ -19,13 +19,37 @@
   window.GAME = MAIN;
 
   // =====================================================================
-  // 启动
+  // 启动（拆成两段）
+  //
+  // 【为什么拆】
+  // 原来 G.boot() 一次做完全部初始化，加载完就直接进场景：
+  // 想改设置、想换存档、想看有没有别的存档，都没有入口。
+  // 而且 world.build() 实测要 966ms，点一下「设置」也得等它建完。
+  //
+  // 拆成：
+  //   bootShell()  渲染器 + 相机 + 输入 + 音频 + 主菜单   ← 立刻可用
+  //   startGame()  构建世界 + 玩家 + UI + 开场          ← 点了菜单才跑
   // =====================================================================
+
   G.boot = function () {
+    G.bootShell();
+  };
+
+  /** 第一阶段：把壳立起来，显示主菜单 */
+  G.bootShell = function () {
     var canvas = document.getElementById('gl');
     if (!canvas) { console.error('no canvas'); return; }
 
     // 渲染器
+    //
+    // 【画质】内部分辨率可以由设置决定。
+    // 注意：这个值在 pixels.init 时就固化成离屏 RT 的尺寸了，
+    // 所以切画质必须重建渲染器 —— 这里只在启动时读一次。
+    if (G.menu && G.menu.qualitySize) {
+      var qs = G.menu.qualitySize();
+      G.INTERNAL_W = qs.w;
+      G.INTERNAL_H = qs.h;
+    }
     G.pixels.init(canvas);
     G.pixels.resize();
 
@@ -34,49 +58,87 @@
     G.camera.init(aspect);
     G.camera.resize(aspect);
 
-    // 存档：先看有没有
+    // 存档元数据（主菜单要读）
     G.save.init();
-    var slot = G.save.currentSlot();
-    var data = G.save.load(slot);
 
-    // 世界
+    // 输入：先绑定到 canvas，但菜单期间禁用游戏输入
+    G.input.init(canvas);
+
+    // 音频
+    if (G.audio) G.audio.init();
+    // 应用已保存的音量
+    if (G.menu) G.menu._setVol(G.menu._getVol());
+
+    // 全局事件只注册一次
+    G.bus.on('sfx', function (id) { if (G.audio) G.audio.play(id); });
+    G.bus.on('player:levelup', function () { if (G.player && G.player.state) G.save.save(); });
+    G.bus.on('enemy:killed', function () { MAIN._killCount = (MAIN._killCount || 0) + 1; });
+
+    window.addEventListener('resize', function () {
+      G.pixels.resize();
+      G.camera.resize(G.INTERNAL_W / G.INTERNAL_H);
+    });
+
+    // 隐藏加载层
+    var boot = document.getElementById('boot');
+    if (boot) boot.style.display = 'none';
+
+    // 主菜单
+    if (G.menu) {
+      // 【自动化测试入口】
+      //
+      // 加载后自动进入游戏，跳过菜单。三种触发方式：
+      //   ?autostart=1        —— 显式指定（测试脚本用）
+      //   ?slot=N             —— 直接读某个存档进游戏
+      //
+      // 为什么需要它：9 个既有验收脚本全都假设"加载完即在场景里"，
+      // 主菜单会打断它们。与其改 9 个脚本各自点一遍菜单，
+      // 不如给一个统一的跳过入口 —— 菜单本身的行为
+      // 由 verify-menu.js 专门覆盖。
+      var skip = G.menu.parseAutostart ? G.menu.parseAutostart() : null;
+      if (skip) {
+        G.menu.hide();
+        G.startGame(skip);
+      } else {
+        G.menu.show();
+      }
+    }
+
+    // 菜单模式下也要渲染（否则画布是黑的）
+    MAIN.lastTime = performance.now();
+    MAIN.running = true;
+    requestAnimationFrame(loop);
+
+    G.log('shell ready v' + G.VERSION);
+    window.__SHELL_READY__ = true;
+  };
+
+  /**
+   * 第二阶段：真正进入游戏。
+   * @param {{slot:number, isNew:boolean, data:object}} opt
+   */
+  G.startGame = function (opt) {
+    opt = opt || {};
+    var slot = opt.slot || G.save.currentSlot();
+    G.save.setSlot(slot);
+
+    var data = opt.data || (opt.isNew ? null : G.save.load(slot));
+
+    // 世界（第一次构建；从菜单重复进入时重建）
+    if (G.world.scene) {
+      G.world.dispose ? G.world.dispose() : null;
+    }
     G.world.build();
 
     // 玩家
     G.player.init(data);
 
-    // 输入
-    G.input.init(canvas);
-
-    // UI
-    G.ui.init();
-
-    // 音频
-    if (G.audio) G.audio.init();
+    // UI（构造函数幂等，这里确保存在）
+    if (!G.ui.root) G.ui.init();
 
     // 任务/对话
     if (G.quest) G.quest.init();
     if (G.dlg) G.dlg.init();
-    if (G.intro) {
-      G.intro.reset();
-      // 【不要在开局直接塞任务】
-      //
-      // 之前这里写的是 `G.quest.start('town_01')` —— 玩家一睁眼就多了个
-      // 「击退鬼火」的目标，既没开场、也没见过千絵、更不知道自己是誰。
-      // 等于把 RPG 的入口砍掉了。
-      //
-      // 现在走 G.intro：
-      //   黑屏渐入 → 三行旁白交代身份与处境 → 引导目标「去找千絵」
-      //   → 走到千絵面前自动触发对话 → 对话结束才由剧情带出第一个任务。
-      if (G.intro.shouldPlay()) {
-        G.intro.playOpening();
-      } else if (G.quest) {
-        // 读档或已有进度：不播开场，但提醒一下目标在哪
-        setTimeout(function () {
-          G.ui.toast('按 L 查看手账，右上角显示当前目标', 3600);
-        }, 1200);
-      }
-    }
 
     // 恢复存档里的世界状态
     if (data && data.world) {
@@ -95,29 +157,38 @@
       }
     }
 
-    // 事件
-    G.bus.on('sfx', function (id) { if (G.audio) G.audio.play(id); });
+    // 开场（只有全新存档才播）
+    if (G.intro) {
+      G.intro.reset();
+      // 【不要在开局直接塞任务】
+      // 之前这里写 `G.quest.start('town_01')` —— 玩家一睁眼就多个任务、
+      // 没开场、没见过 NPC。等于把 RPG 的入口砍掉了。
+      // 现在走 G.intro：旁白 → 引导去找千絵 → 对话结束才由剧情带出任务。
+      if (opt.isNew || G.intro.shouldPlay()) {
+        G.intro.playOpening();
+      } else if (G.quest && !opt.isNew) {
+        setTimeout(function () {
+          G.ui.toast('按 L 查看手账，右上角显示当前目标', 3600);
+        }, 1200);
+      }
+    }
 
-    // 自动保存时机
-    G.bus.on('player:levelup', function () { G.save.save(); });
-    G.bus.on('enemy:killed', function () { MAIN._killCount = (MAIN._killCount || 0) + 1; });
+    if (G.menu) G.menu.enteredGame = true;
 
-    // 首帧渲染
-    MAIN.lastTime = performance.now();
-    MAIN.running = true;
-    requestAnimationFrame(loop);
+    // 确保主循环在跑
+    if (!MAIN.running) {
+      MAIN.lastTime = performance.now();
+      MAIN.running = true;
+      requestAnimationFrame(loop);
+    }
 
-    window.addEventListener('resize', function () {
-      G.pixels.resize();
-      G.camera.resize(G.INTERNAL_W / G.INTERNAL_H);
-    });
-
-    // 隐藏加载层
-    var boot = document.getElementById('boot');
-    if (boot) boot.style.display = 'none';
-
-    G.log('booted v' + G.VERSION);
+    G.save.save(slot);
     window.__GAME_READY__ = true;
+  };
+
+  /** 停主循环（回主菜单时用） */
+  MAIN.stop = function () {
+    MAIN.running = false;
   };
 
   // =====================================================================
@@ -151,7 +222,12 @@
       MAIN.accumulator -= dt;
       steps++;
 
-      if (!MAIN.paused) {
+      // 菜单打开且未进入游戏时，不推进游戏逻辑。
+      // 世界可能还不存在（world.build 尚未调用），step() 里到处访问
+      // G.world.scene / G.player.state 会炸。
+      var inMenu = G.menu && G.menu.visible && !G.menu.enteredGame;
+
+      if (!MAIN.paused && !inMenu) {
         // 关键：hitstop 状态必须每步重新判断。
         // 踩过的大坑：曾经在 while 外面算一次 inHitstop 传进来，
         // 结果第一次命中产生 hitstop 之后，外层变量一直是 true，
@@ -235,7 +311,15 @@
     if (G.input.pressed.inventory) G.ui.togglePanel('inventory');
     if (G.input.pressed.questlog) G.ui.togglePanel('quest');
     if (G.input.pressed.escape) {
-      if (G.ui.anyPanelOpen()) { G.ui.closeAllPanels(); }
+      // Esc 的优先级：关面板 > 关对话 > 返回主菜单
+      if (G.dlg && G.dlg.active) {
+        G.dlg.close();
+      } else if (G.ui.anyPanelOpen()) {
+        G.ui.closeAllPanels();
+      } else if (G.menu && G.menu.showFromGame) {
+        // 没有面板/对话时才允许退出到主菜单，避免误触
+        G.menu.showFromGame();
+      }
     }
     if (G.input.pressed.confirm && G.dlg && G.dlg.active) {
       G.dlg.advance();
@@ -250,6 +334,15 @@
   }
 
   function render(dt) {
+    // 菜单模式下世界还没构建（或是空的），不能渲染游戏画面。
+    // 菜单有自己的 DOM 背景，这里直接清屏即可。
+    if (!G.world || !G.world.scene || (G.menu && G.menu.visible && !G.menu.enteredGame)) {
+      if (G.pixels && G.pixels.renderer) {
+        G.pixels.renderer.setClearColor(0x0A0810, 1);
+        G.pixels.renderer.clear();
+      }
+      return;
+    }
     G.pixels.render(G.world.scene, G.camera.cam);
   }
 

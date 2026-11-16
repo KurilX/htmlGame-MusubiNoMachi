@@ -52,7 +52,10 @@ async function main() {
   } catch (e) {}
 
   // 直接打开构建产物（无 cacheBust 也要能跑，因为它是独立文件）
-  const url = 'file:///' + GAME.replace(/\\/g, '/');
+  //
+  // 加 ?autostart=1 跳过主菜单：主菜单上线后加载完不再直接进场景，
+  // 本脚本假设"加载完即在场景里"，不跳过会一直等不到世界构建。
+  const url = 'file:///' + GAME.replace(/\\/g, '/') + '?autostart=1';
   console.log('打开 ' + url + '\n');
   await cdp.send('Page.navigate', { url });
   await sleep(4500);

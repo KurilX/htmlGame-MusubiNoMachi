@@ -89,7 +89,7 @@ async function run(cdp, check, results) {
   });
 
   // ---- 打开游戏（带 cacheBust 防 file:// 缓存）----
-  const cacheBust = '?v=' + Date.now();
+  const cacheBust = '?autostart=1&v=' + Date.now();
   const url = 'file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + cacheBust;
   console.log('打开 ' + url + '\n');
   await cdp.send('Page.navigate', { url });

@@ -26,7 +26,7 @@ const ROOT = path.resolve(__dirname, '..');
 // 传参被静默忽略，差点把本地结果当成线上验收。
 // 这里显式支持 argv[2]，并打印真实加载的地址。
 const TARGET_URL = process.argv[2] ||
-  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now());
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now());
 
 async function main() {
   const results = [];

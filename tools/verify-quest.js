@@ -13,7 +13,7 @@ const { launchOwnChrome, sleep } = require('./cdp');
 const ROOT = path.resolve(__dirname, '..');
 
 const TARGET_URL = process.argv[2] ||
-  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?v=' + Date.now());
+  ('file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + '?autostart=1&v=' + Date.now());
 
 async function main() {
   const results = [];

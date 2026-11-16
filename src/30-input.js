@@ -33,6 +33,23 @@
 
   var mouseDownButtons = {};
 
+  /**
+   * 启用/禁用游戏输入。
+   * 主菜单打开时必须禁用 —— 否则在菜单里按 WASD 会让角色跑起来
+   * （菜单显示时世界可能还没构建，甚至会直接报错）。
+   */
+  I.setEnabled = function (on) {
+    I.enabled = !!on;
+    if (!on) {
+      // 清掉残留的按键状态，避免关闭菜单后角色"持续按住"某个键
+      I.keys = {};
+      I.pressed = {};
+      I.mouse.down = false;
+      I.mouse.clicked = false;
+      I.mouse.rightClicked = false;
+    }
+  };
+
   I.init = function (canvas) {
     window.addEventListener('keydown', function (e) {
       if (!I.enabled) return;
