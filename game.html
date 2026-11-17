@@ -771,7 +771,7 @@ canvas#gl {
   color: rgba(232,224,216,0.24);
 }
 </style>
-<!-- 构建产物：2026-11-17T06:34:38.032Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-17T07:46:21.396Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -12651,6 +12651,967 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 })(window.G = window.G || {});
 
 </script>
+<!-- 2D 渲染管线（?mode=2d 启用，与上面 3D 世界并行，互不影响） -->
+<!-- ==== src/50-canvas2d.js ==== -->
+<script>
+/* 50-canvas2d.js — 真正的 Canvas 2D 渲染层
+ *
+ * 【为什么彻底换掉 WebGL】
+ * 前三次失败（图层穿透 / 角色消失 / 纹理混乱）都源于同一个原因：
+ * 拿 3D 相机和 3D 几何去"模拟"2D 俯视。2D 游戏不需要深度缓冲，
+ * 不需要正交相机，也不需要 billboard。
+ *
+ * 本文件提供：
+ *   - 一个 Canvas 2D 上下文（带像素化缩放）
+ *   - 相机（就是一个 x/y 偏移，没有旋转）
+ *   - 按 y 排序的精灵绘制（画家算法，天然不会穿透）
+ *   - 瓦片地图绘制
+ *
+ * 【坐标系】
+ *   世界单位 = 像素（1:1），不做任何投影变换。
+ *   地图用「格子」表示，一格 = TILE 像素（默认 32）。
+ */
+(function (G) {
+  'use strict';
+
+  var R = G.render2d = {};
+
+  R.TILE = 32;             // 一格多少像素
+
+  R.canvas = null;
+  R.ctx = null;
+  R.outCanvas = null;      // 屏幕上的 canvas
+  R.outCtx = null;
+
+  // 相机：世界坐标（像素）
+  R.cam = { x: 0, y: 0 };
+  R.camTarget = { x: 0, y: 0 };
+
+  // 内部渲染尺寸（先按逻辑像素画，再整数倍放大）
+  R.VIEW_W = 640;
+  R.VIEW_H = 360;
+
+  // 缩放倍率（自动按窗口算）
+  R.scale = 1;
+
+  // 绘制队列（按 y 排序）
+  R._sprites = [];
+
+  // =====================================================================
+  // 初始化
+  // =====================================================================
+  R.init = function (outCanvas) {
+    R.outCanvas = outCanvas || document.getElementById('gl');
+    if (!R.outCanvas) { console.error('[render2d] 没有 canvas'); return false; }
+
+    // 屏幕画布：关闭平滑，保持像素硬边
+    R.outCtx = R.outCanvas.getContext('2d', { alpha: false });
+    R.outCtx.imageSmoothingEnabled = false;
+
+    // 离屏画布：按内部逻辑分辨率渲染
+    R.canvas = document.createElement('canvas');
+    R.canvas.width = R.VIEW_W;
+    R.canvas.height = R.VIEW_H;
+    R.ctx = R.canvas.getContext('2d', { alpha: false });
+    R.ctx.imageSmoothingEnabled = false;
+
+    R.resize();
+    return true;
+  };
+
+  R.resize = function () {
+    if (!R.outCanvas) return;
+    var dpr = 1;
+    var w = window.innerWidth, h = window.innerHeight;
+
+    // 【关键：内部逻辑分辨率跟随窗口，保证铺满】
+    //
+    // 第一版把 VIEW 固定成 640×360，然后靠整数倍缩放铺到屏幕。
+    // 问题：屏幕 1078×596 时 floor(min(1.68,1.65)) = 1，
+    // 画面只有 640×360 占中间一小块，四周全是黑边。
+    //
+    // 像素风要的是「像素颗粒感」，不是「固定逻辑分辨率」。
+    // 正确做法：逻辑分辨率按窗口算出一个"整数倍"关系，
+    // 即 screen = logical × scale，且 scale 为整数，logical 尽量大。
+    var targetScale = 2;                     // 目标放大倍率
+    var lw = Math.floor(w / targetScale);
+    var lh = Math.floor(h / targetScale);
+
+    // 逻辑分辨率限制在合理范围（太小看不清，太大失去像素感）
+    lw = Math.max(320, Math.min(960, lw));
+    lh = Math.max(180, Math.min(540, lh));
+
+    R.VIEW_W = lw;
+    R.VIEW_H = lh;
+
+    R.outCanvas.width = Math.floor(w * dpr);
+    R.outCanvas.height = Math.floor(h * dpr);
+    R.outCanvas.style.width = w + 'px';
+    R.outCanvas.style.height = h + 'px';
+
+    // 【复用已有的离屏 canvas】
+    //
+    // 踩过的坑：这里曾经写成「如果 R.canvas 不存在就新建」，
+    // 但 init() 里已经建过一次，resize() 里又判断 `!R.canvas` ——
+    // 而 init 之后 R.canvas 是存在的，所以不该重建。
+    // 但如果反过来（resize 先执行、init 后执行），就会出问题。
+    // 所以改成：**谁都可以保证 canvas 与 ctx 同时存在**。
+    if (!R.canvas) {
+      R.canvas = document.createElement('canvas');
+    }
+    if (!R.ctx) {
+      R.ctx = R.canvas.getContext('2d', { alpha: false });
+    }
+    R.canvas.width = lw;
+    R.canvas.height = lh;
+    R.ctx.imageSmoothingEnabled = false;
+
+    // 铺满屏幕（非整数倍也可以，但保持像素硬边）
+    R.scale = Math.max(1, R.outCanvas.width / lw);
+    R._dw = R.outCanvas.width;
+    R._dh = R.outCanvas.height;
+    R._dx = 0;
+    R._dy = 0;
+
+    R.outCtx.imageSmoothingEnabled = false;
+    R.outCtx.fillStyle = '#0A0810';
+    R.outCtx.fillRect(0, 0, R.outCanvas.width, R.outCanvas.height);
+  };
+
+  // =====================================================================
+  // 相机
+  // =====================================================================
+  R.camFollow = function (worldX, worldY, snap) {
+    R.camTarget.x = worldX - R.VIEW_W / 2;
+    R.camTarget.y = worldY - R.VIEW_H / 2;
+    if (snap) {
+      R.cam.x = R.camTarget.x;
+      R.cam.y = R.camTarget.y;
+    }
+  };
+
+  R.camUpdate = function (dt) {
+    // 平滑跟随（0.12 秒收敛）
+    var k = Math.min(1, dt * 8);
+    R.cam.x += (R.camTarget.x - R.cam.x) * k;
+    R.cam.y += (R.camTarget.y - R.cam.y) * k;
+  };
+
+  /** 世界坐标 → 画布坐标 */
+  R.w2c = function (wx, wy) {
+    return { x: wx - R.cam.x, y: wy - R.cam.y };
+  };
+
+  // =====================================================================
+  // 每帧开始：清屏
+  // =====================================================================
+  R.begin = function (bg) {
+    var c = R.ctx;
+    c.fillStyle = bg || '#1E2A1A';
+    c.fillRect(0, 0, R.VIEW_W, R.VIEW_H);
+  };
+
+  // =====================================================================
+  // 瓦片地图绘制
+  // =====================================================================
+  /**
+   * 绘制瓦片地图。
+   * @param {object} map   { cols, rows, tile, layers: [{ data: Int16Array|Array, tileset }] }
+   *
+   * layer.data 是一维数组，索引 = row * cols + col，值 = 瓦片编号（0 = 空）。
+   * tileset 提供 getTile(id) -> { img, sx, sy, sw, sh }
+   */
+  R.drawMap = function (map) {
+    var c = R.ctx;
+    var T = map.tile || R.TILE;
+    var camX = R.cam.x, camY = R.cam.y;
+
+    // 只画可见范围（性能关键）
+    var c0 = Math.max(0, Math.floor(camX / T));
+    var c1 = Math.min(map.cols - 1, Math.ceil((camX + R.VIEW_W) / T));
+    var r0 = Math.max(0, Math.floor(camY / T));
+    var r1 = Math.min(map.rows - 1, Math.ceil((camY + R.VIEW_H) / T));
+
+    for (var li = 0; li < map.layers.length; li++) {
+      var layer = map.layers[li];
+      var data = layer.data;
+      var ts = layer.tileset;
+
+      for (var r = r0; r <= r1; r++) {
+        for (var cc = c0; cc <= c1; cc++) {
+          var id = data[r * map.cols + cc];
+          if (!id) continue;
+          var t = ts.getTile(id);
+          if (!t || !t.img) continue;
+
+          // 【关键】drawImage 按像素矩形裁切 —— 所见即所得，
+          // 不存在 UV 采样跨帧导致的"纹理混乱"
+          c.drawImage(
+            t.img,
+            t.sx, t.sy, t.sw, t.sh,
+            Math.round(cc * T - camX), Math.round(r * T - camY),
+            T, T
+          );
+        }
+      }
+    }
+  };
+
+  // =====================================================================
+  // 精灵（按 y 排序）
+  // =====================================================================
+  R.clearSprites = function () {
+    R._sprites.length = 0;
+  };
+
+  /**
+   * 加一个精灵到绘制队列。
+   * @param {object} s { img, sx, sy, sw, sh, wx, wy, dw, dh, sortY, flip }
+   *
+   * wx/wy = 精灵「脚底」的世界坐标（排序锚点）
+   */
+  R.pushSprite = function (s) {
+    R._sprites.push(s);
+  };
+
+  /** 把队列按 sortY 排序后绘制（画家算法） */
+  R.flushSprites = function () {
+    var list = R._sprites;
+    list.sort(function (a, b) { return a.sortY - b.sortY; });
+
+    var c = R.ctx;
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      if (!s.img) continue;
+
+      var dx = Math.round(s.wx - R.cam.x - (s.dw || s.sw) / 2);
+      var dy = Math.round(s.wy - R.cam.y - (s.dh || s.sh));
+
+      // 视口裁剪
+      if (dx > R.VIEW_W || dy > R.VIEW_H ||
+          dx + (s.dw || s.sw) < 0 || dy + (s.dh || s.sh) < 0) continue;
+
+      var dw = s.dw || s.sw;
+      var dh = s.dh || s.sh;
+
+      if (s.flip) {
+        c.save();
+        c.translate(dx + dw, dy);
+        c.scale(-1, 1);
+        c.drawImage(s.img, s.sx, s.sy, s.sw, s.sh, 0, 0, dw, dh);
+        c.restore();
+      } else {
+        c.drawImage(s.img, s.sx, s.sy, s.sw, s.sh, dx, dy, dw, dh);
+      }
+    }
+    list.length = 0;
+  };
+
+  /** 直接画一个图片（不参与排序，用于 UI 层） */
+  R.drawSpriteDirect = function (img, sx, sy, sw, sh, wx, wy, dw, dh) {
+    var c = R.ctx;
+    c.drawImage(img, sx, sy, sw, sh,
+      Math.round(wx - R.cam.x), Math.round(wy - R.cam.y),
+      dw || sw, dh || sh);
+  };
+
+  // =====================================================================
+  // 屏幕合成
+  // =====================================================================
+  R.present = function () {
+    var oc = R.outCtx;
+    oc.imageSmoothingEnabled = false;
+    oc.fillStyle = '#0A0810';
+    oc.fillRect(0, 0, R.outCanvas.width, R.outCanvas.height);
+    oc.drawImage(
+      R.canvas,
+      0, 0, R.VIEW_W, R.VIEW_H,
+      R._dx, R._dy, R._dw, R._dh
+    );
+  };
+
+  // =====================================================================
+  // 调试信息
+  // =====================================================================
+  R.info = function () {
+    return {
+      viewW: R.VIEW_W, viewH: R.VIEW_H,
+      scale: R.scale,
+      camX: Math.round(R.cam.x), camY: Math.round(R.cam.y),
+      canvasW: R.outCanvas ? R.outCanvas.width : 0
+    };
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/51-rpg16-tiles.js ==== -->
+<script>
+/* 51-rpg16-tiles.js — RPG16 瓦片索引（唯一素材来源）
+ *
+ * 【为什么换成这套】
+ * 之前反复失败是因为素材不配套：
+ *   LPC terrain  → 只有自然地形，没有建筑
+ *   exterior_32  → 斜俯视建筑，与 2D 正俯视不匹配
+ *   minishcap    → 是对话框边框
+ *
+ * 这套（OpenGameArt "16x16 RPG Tileset", CC-BY-SA 3.0 + GPL）是**完整配套**：
+ * 地形 / 泥土 / 沙滩 / 水 / 建筑 / 屋顶 / 植物 / 地板 / 角色，全部 16px 正俯视。
+ *
+ * 【坐标是怎么确定的】
+ * 不是猜的。tools/find-tiles.js 用严格判据逐格扫描：
+ *   1) 100% 不透明（否则平铺出黑洞）
+ *   2) 颜色方差 < 900（否则平铺出重复图案）
+ *   3) 不是纯黑/纯白（遮罩或空白）
+ * 然后 tools/pick-verify.js 把候选裁出来拼成对照图人工确认。
+ *
+ * 每一块都经过这两步，见 tools/picks_check.png。
+ */
+(function (G) {
+  'use strict';
+
+  var T = G.tiles16 = {};
+
+  T.SIZE = 16;              // 瓦片像素尺寸
+  T.CHAR_W = 32;            // 角色帧宽
+  T.CHAR_H = 64;            // 角色帧高
+  T.CHAR_FRAMES = 7;        // 每方向 7 帧（0=站立，1~6 行走）
+  T.CHAR_DIRS = 4;          // 0=下 1=上 2=左 3=右
+
+  T.sheets = {};
+  T.ok = false;
+
+  /** 图集文件 */
+  T.SHEETS = {
+    terrain:     'assets/rpg16/1_terrain.png',
+    indoors:     'assets/rpg16/2_indoors.png',
+    plants:      'assets/rpg16/3_plants.png',
+    buildings:   'assets/rpg16/4_buildings.png',
+    waterfall:   'assets/rpg16/5_waterfall.png',
+    floors:      'assets/rpg16/6_floors.png',
+    grass_cliff: 'assets/rpg16/7_grass_cliff.png',
+    cave:        'assets/rpg16/8_cave.png',
+    beach:       'assets/rpg16/9_beach.png',
+    dirt:        'assets/rpg16/10_dirt.png',
+    roofs:       'assets/rpg16/11_roofs.png',
+    chars:       'assets/rpg16/14_human_sprite_base.png'
+  };
+
+  /**
+   * 瓦片定义。
+   * 全部经 find-tiles.js 严格筛选 + pick-verify.js 人工确认。
+   */
+  T.DEFS = {
+    // ============ 地形（1_terrain.png）============
+    // 实测：绿色低方差块在 row 0，col 6~9
+    'grass':   { sheet: 'terrain', r: 0, c: 6 },
+    'grass2':  { sheet: 'terrain', r: 0, c: 7 },
+    'grass3':  { sheet: 'terrain', r: 0, c: 8 },
+    'grass4':  { sheet: 'terrain', r: 0, c: 9 },
+
+    // 灰石（row 24）
+    'stone':   { sheet: 'terrain', r: 24, c: 6 },
+    'stone2':  { sheet: 'terrain', r: 24, c: 7 },
+
+    // 红砖（row 0, col 26）
+    'brick':   { sheet: 'terrain', r: 0, c: 26 },
+
+    // ============ 泥土（10_dirt.png）============
+    'dirt':    { sheet: 'dirt', r: 0, c: 6 },
+    'dirt2':   { sheet: 'dirt', r: 1, c: 3 },
+
+    // ============ 沙滩（9_beach.png）============
+    'sand':    { sheet: 'beach', r: 8, c: 2 },
+
+    // ============ 水（5_waterfall.png）============
+    'water':   { sheet: 'waterfall', r: 8, c: 2 },
+    'water2':  { sheet: 'waterfall', r: 8, c: 3 },
+
+    // ============ 草地悬崖（7_grass_cliff.png）============
+    'cliffGrass': { sheet: 'grass_cliff', r: 0, c: 23 },
+
+    // ============ 地板（6_floors.png）============
+    'floorWood':  { sheet: 'floors', r: 1, c: 1 },
+    'floorWood2': { sheet: 'floors', r: 1, c: 2 },
+    'floorStone': { sheet: 'floors', r: 6, c: 12 },
+    'floorStone2':{ sheet: 'floors', r: 6, c: 13 },
+
+    // ============ 屋顶（11_roofs.png）============
+    'roof':    { sheet: 'roofs', r: 0, c: 8 },
+    'roof2':   { sheet: 'roofs', r: 1, c: 6 },
+
+    // ============ 建筑墙（4_buildings.png）============
+    'wall':    { sheet: 'buildings', r: 3, c: 18 },
+    'wall2':   { sheet: 'buildings', r: 12, c: 16 },
+    'wall3':   { sheet: 'buildings', r: 18, c: 8 },
+
+    // ============ 植物（3_plants.png）============
+    'grassTuft': { sheet: 'plants', r: 1, c: 0 },
+    'bush':      { sheet: 'plants', r: 1, c: 4 }
+  };
+
+  /** 可通行判定 */
+  T.WALKABLE = {
+    grass: true, grass2: true, grass3: true, grass4: true,
+    stone: true, stone2: true, brick: true,
+    dirt: true, dirt2: true, sand: true,
+    cliffGrass: true,
+    floorWood: true, floorWood2: true, floorStone: true, floorStone2: true,
+    water: false, water2: false,
+    roof: false, roof2: false,
+    wall: false, wall2: false, wall3: false,
+    grassTuft: true, bush: false
+  };
+
+  T.isWalkable = function (name) {
+    var v = T.WALKABLE[name];
+    return v === undefined ? true : v;
+  };
+
+  /** 哪些瓦片带透明（装饰物，绘制时不铺底） */
+  T.IS_DECO = {
+    grassTuft: true, bush: true
+  };
+
+  // =====================================================================
+  // 加载
+  // =====================================================================
+  T.load = function (onProgress) {
+    var names = Object.keys(T.SHEETS);
+    var total = names.length;
+    var done = 0;
+
+    return Promise.all(names.map(function (name) {
+      return new Promise(function (resolve) {
+        var img = new Image();
+        img.onload = function () {
+          T.sheets[name] = img;
+          done++;
+          if (onProgress) onProgress(done, total, name);
+          resolve(true);
+        };
+        img.onerror = function () {
+          console.warn('[tiles16] 加载失败: ' + T.SHEETS[name]);
+          done++;
+          if (onProgress) onProgress(done, total, name + '(失败)');
+          resolve(false);
+        };
+        img.src = T.SHEETS[name] + '?v=2';
+      });
+    })).then(function () {
+      T.ok = Object.keys(T.sheets).length > 0;
+      console.log('[tiles16] 图集 ' + Object.keys(T.sheets).length + '/' + total);
+      return T.ok;
+    });
+  };
+
+  /** 取瓦片绘制参数 */
+  T.get = function (name) {
+    var d = T.DEFS[name];
+    if (!d) return null;
+    var img = T.sheets[d.sheet];
+    if (!img) return null;
+    return {
+      img: img,
+      sx: d.c * T.SIZE,
+      sy: d.r * T.SIZE,
+      sw: T.SIZE,
+      sh: T.SIZE
+    };
+  };
+
+  /** render2d.drawMap 适配器 */
+  T.adapter = function () {
+    return { getTile: function (id) { return T.get(id); } };
+  };
+
+  // =====================================================================
+  // 角色
+  // =====================================================================
+  /**
+   * 取角色帧。
+   * @param {number} dir   0=下 1=上 2=左 3=右
+   * @param {number} frame 0~6
+   */
+  T.charFrame = function (dir, frame) {
+    var img = T.sheets.chars;
+    if (!img) return null;
+    var d = Math.max(0, Math.min(T.CHAR_DIRS - 1, dir | 0));
+    var f = Math.max(0, Math.min(T.CHAR_FRAMES - 1, frame | 0));
+    return {
+      img: img,
+      sx: f * T.CHAR_W,
+      sy: d * T.CHAR_H,
+      sw: T.CHAR_W,
+      sh: T.CHAR_H
+    };
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/52-world2d.js ==== -->
+<script>
+/* 52-world2d.js — 2D 瓦片世界（結ノ町城镇）
+ *
+ * 【这是什么】
+ * 一个真正的 2D 瓦片地图世界。没有 3D 相机、没有高度、没有深度缓冲。
+ *
+ * 【地图表示】
+ *   cols × rows 的二维数组，每格存瓦片名（字符串）。
+ *   渲染时按格子 drawImage，天然不会穿透。
+ *
+ * 【与旧世界的关系】
+ * 旧世界（src/50-world.js，3D）**保留不动**，主菜单/存档/任务都还依赖它的数据。
+ * 本文件是并行的 2D 实现，通过 ?mode=2d 启用。
+ * 等 2D 版验证通过后，再逐步迁移数据。
+ */
+(function (G) {
+  'use strict';
+
+  var W2 = G.world2d = {};
+
+  W2.TILE = 32;          // 一格 32 屏幕像素（16px 素材 × 2 倍）
+
+  W2.map = null;         // { cols, rows, ground: [], deco: [], solid: [] }
+  W2.player = null;      // { x, y, dir, frame, animT, moving }
+  W2.npcs = [];
+
+  // =====================================================================
+  // 构建結ノ町城镇地图
+  // =====================================================================
+  //
+  // 布局（保持原有地理概念：城镇是中心，往北是鸟居和野外）
+  //   ┌─────────────────────────────┐
+  //   │  草地 / 外围                │
+  //   │   ┌───────┐   ┌───────┐    │  ← 房屋
+  //   │   │ 房1   │   │ 房2   │    │
+  //   │   └───────┘   └───────┘    │
+  //   │        ── 主路 ──           │
+  //   │   ┌───────┐   ┌───────┐    │
+  //   │   │ 房3   │   │ 房4   │    │
+  //   │   └───────┘   └───────┘    │
+  //   │        鸟居（北出口）        │
+  //   └─────────────────────────────┘
+  W2.buildTown = function () {
+    var COLS = 40, ROWS = 30;
+    var ground = new Array(COLS * ROWS);
+    var deco = new Array(COLS * ROWS);
+    var solid = new Array(COLS * ROWS);   // 碰撞
+
+    function idx(c, r) { return r * COLS + c; }
+    function set(arr, c, r, v) {
+      if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+      arr[idx(c, r)] = v;
+    }
+
+    // ---- 1. 铺草地（带随机变化，避免死板）----
+    var grassVariants = ['grass', 'grass2', 'grass3', 'grass4'];
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        // 用坐标做伪随机，同一位置永远是同一块（可复现）
+        var h = (c * 73856093) ^ (r * 19349663);
+        var pick = Math.abs(h) % grassVariants.length;
+        set(ground, c, r, grassVariants[pick]);
+      }
+    }
+
+    // ---- 2. 主路（南北向，从鸟居往南穿过城镇）----
+    for (var rr = 2; rr < ROWS - 2; rr++) {
+      set(ground, 19, rr, 'dirt');
+      set(ground, 20, rr, 'dirt2');
+      set(ground, 21, rr, 'dirt');
+    }
+
+    // ---- 3. 东西向的街 ----
+    for (var cc = 8; cc < 32; cc++) {
+      set(ground, cc, 15, 'dirt');
+      set(ground, cc, 16, 'dirt2');
+    }
+
+    // ---- 4. 四栋房子 ----
+    //
+    // 每栋 = 屋顶（上方若干行）+ 墙（下方）+ 门
+    var houses = [
+      { c: 10, r: 6,  w: 6, h: 4 },
+      { c: 24, r: 6,  w: 6, h: 4 },
+      { c: 10, r: 19, w: 6, h: 4 },
+      { c: 24, r: 19, w: 6, h: 4 }
+    ];
+
+    houses.forEach(function (h) {
+      for (var dy = 0; dy < h.h; dy++) {
+        for (var dx = 0; dx < h.w; dx++) {
+          var c2 = h.c + dx, r2 = h.r + dy;
+          if (dy < h.h - 1) {
+            // 屋顶部分
+            set(ground, c2, r2, (dy === 0) ? 'roof2' : 'roof');
+            set(solid, c2, r2, true);
+          } else {
+            // 墙 + 门（门开在中间）
+            var isDoor = (dx === Math.floor(h.w / 2));
+            set(ground, c2, r2, isDoor ? 'floorWood' : 'wall');
+            set(solid, c2, r2, !isDoor);
+          }
+        }
+      }
+    });
+
+    // ---- 5. 鸟居位置标记（用砖块做柱子）----
+    // 北出口两侧各立一根
+    set(ground, 18, 2, 'brick'); set(solid, 18, 2, true);
+    set(ground, 22, 2, 'brick'); set(solid, 22, 2, true);
+
+    // ---- 6. 装饰：草丛与灌木 ----
+    var decoSpots = [
+      [4, 4], [7, 5], [15, 3], [28, 4], [34, 6], [3, 12], [36, 10],
+      [5, 24], [16, 26], [27, 25], [33, 22], [2, 18], [37, 16],
+      [12, 11], [27, 12], [9, 26], [30, 8]
+    ];
+    decoSpots.forEach(function (p, i) {
+      set(deco, p[0], p[1], (i % 3 === 0) ? 'bush' : 'grassTuft');
+      if (i % 3 === 0) set(solid, p[0], p[1], true);
+    });
+
+    // ---- 7. 边缘：外圈用悬崖草地围起来 ----
+    for (var e = 0; e < COLS; e++) {
+      set(ground, e, 0, 'cliffGrass');   set(solid, e, 0, true);
+      set(ground, e, ROWS - 1, 'cliffGrass'); set(solid, e, ROWS - 1, true);
+    }
+    for (var e2 = 0; e2 < ROWS; e2++) {
+      set(ground, 0, e2, 'cliffGrass');  set(solid, 0, e2, true);
+      set(ground, COLS - 1, e2, 'cliffGrass'); set(solid, COLS - 1, e2, true);
+    }
+
+    W2.map = {
+      cols: COLS, rows: ROWS,
+      ground: ground,
+      deco: deco,
+      solid: solid
+    };
+
+    // ---- 8. 玩家初始位置：主路上，房子之间 ----
+    W2.player = {
+      x: 20 * W2.TILE + W2.TILE / 2,
+      y: 13 * W2.TILE + W2.TILE / 2,
+      dir: 0,
+      frame: 0,
+      animT: 0,
+      moving: false,
+      speed: 130
+    };
+
+    // ---- 9. NPC：4 个，站在房子门口与路旁 ----
+    W2.npcs = [
+      { x: 13 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '千絵' },
+      { x: 27 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '鉄次' },
+      { x: 12 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: '杏' },
+      { x: 28 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: 'ろじ' }
+    ];
+
+    return W2.map;
+  };
+
+  // =====================================================================
+  // 碰撞
+  // =====================================================================
+  W2.isSolidAt = function (worldX, worldY) {
+    var m = W2.map;
+    if (!m) return false;
+    var c = Math.floor(worldX / W2.TILE);
+    var r = Math.floor(worldY / W2.TILE);
+    if (c < 0 || c >= m.cols || r < 0 || r >= m.rows) return true;
+
+    // 显式碰撞标记
+    if (m.solid[r * m.cols + c]) return true;
+
+    // 或者瓦片本身不可通行
+    var g = m.ground[r * m.cols + c];
+    return !G.tiles16.isWalkable(g);
+  };
+
+  // =====================================================================
+  // 更新（移动 + 动画）
+  // =====================================================================
+  W2.update = function (dt, input) {
+    var p = W2.player;
+    if (!p) return;
+
+    var ax = 0, ay = 0;
+    if (input.keys.left) ax -= 1;
+    if (input.keys.right) ax += 1;
+    if (input.keys.up) ay -= 1;
+    if (input.keys.down) ay += 1;
+
+    // 归一化（对角线不加速）
+    if (ax !== 0 && ay !== 0) {
+      var inv = Math.SQRT1_2;
+      ax *= inv; ay *= inv;
+    }
+
+    p.moving = (ax !== 0 || ay !== 0);
+
+    if (p.moving) {
+      // 朝向：以水平/垂直分量决定（4 方向）
+      if (Math.abs(ax) > Math.abs(ay)) {
+        p.dir = (ax > 0) ? 3 : 2;   // 右 / 左
+      } else {
+        p.dir = (ay > 0) ? 0 : 1;   // 下 / 上
+      }
+
+      var nx = p.x + ax * p.speed * dt;
+      var ny = p.y + ay * p.speed * dt;
+
+      // 分轴碰撞（可以沿墙滑动）
+      if (!W2.isSolidAt(nx, p.y)) p.x = nx;
+      if (!W2.isSolidAt(p.x, ny)) p.y = ny;
+
+      // 行走动画：6 帧循环
+      p.animT += dt;
+      p.frame = 1 + (Math.floor(p.animT * 8) % 6);
+    } else {
+      p.animT = 0;
+      p.frame = 0;
+    }
+
+    // NPC 朝向玩家（简单的雷达式）
+    W2.npcs.forEach(function (n) {
+      var dx = p.x - n.x, dy = p.y - n.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        n.dir = (dx > 0) ? 3 : 2;
+      } else {
+        n.dir = (dy > 0) ? 0 : 1;
+      }
+    });
+
+    // 相机跟随
+    if (G.render2d) {
+      G.render2d.camFollow(p.x, p.y);
+    }
+  };
+
+  // =====================================================================
+  // 绘制
+  // =====================================================================
+  W2.draw = function () {
+    var R = G.render2d;
+    var m = W2.map;
+    if (!R || !m) return;
+
+    R.begin('#1A2418');
+
+    // ---- 地面层 ----
+    var T = W2.TILE;
+    var camX = R.cam.x, camY = R.cam.y;
+    var c0 = Math.max(0, Math.floor(camX / T));
+    var c1 = Math.min(m.cols - 1, Math.ceil((camX + R.VIEW_W) / T));
+    var r0 = Math.max(0, Math.floor(camY / T));
+    var r1 = Math.min(m.rows - 1, Math.ceil((camY + R.VIEW_H) / T));
+
+    var ctx = R.ctx;
+    for (var r = r0; r <= r1; r++) {
+      for (var c = c0; c <= c1; c++) {
+        var name = m.ground[r * m.cols + c];
+        if (!name) continue;
+        var t = G.tiles16.get(name);
+        if (!t) continue;
+        ctx.drawImage(
+          t.img, t.sx, t.sy, t.sw, t.sh,
+          Math.round(c * T - camX), Math.round(r * T - camY),
+          T, T
+        );
+      }
+    }
+
+    // ---- 装饰层（草丛/灌木，带透明，用画家算法排序）----
+    for (var r2 = r0; r2 <= r1; r2++) {
+      for (var c2 = c0; c2 <= c1; c2++) {
+        var dn = m.deco[r2 * m.cols + c2];
+        if (!dn) continue;
+        var dt2 = G.tiles16.get(dn);
+        if (!dt2) continue;
+        ctx.drawImage(
+          dt2.img, dt2.sx, dt2.sy, dt2.sw, dt2.sh,
+          Math.round(c2 * T - camX), Math.round(r2 * T - camY),
+          T, T
+        );
+      }
+    }
+
+    // ---- 角色层：按 y 排序 ----
+    R.clearSprites();
+
+    // NPC
+    var npcFrames = [0, 0, 0, 0];
+    W2.npcs.forEach(function (n) {
+      var f = G.tiles16.charFrame(n.dir, 0);
+      if (!f) return;
+      R.pushSprite({
+        img: f.img, sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh,
+        wx: n.x, wy: n.y,
+        dw: T, dh: T * 2,      // 32×64 → 显示成 32×64（即 1×2 格）
+        sortY: n.y
+      });
+    });
+
+    // 玩家
+    var p = W2.player;
+    var pf = G.tiles16.charFrame(p.dir, p.frame);
+    if (pf) {
+      R.pushSprite({
+        img: pf.img, sx: pf.sx, sy: pf.sy, sw: pf.sw, sh: pf.sh,
+        wx: p.x, wy: p.y,
+        dw: T, dh: T * 2,
+        sortY: p.y
+      });
+    }
+
+    R.flushSprites();
+    R.present();
+  };
+
+  // =====================================================================
+  // 调试信息
+  // =====================================================================
+  W2.info = function () {
+    if (!W2.map || !W2.player) return null;
+    return {
+      cols: W2.map.cols,
+      rows: W2.map.rows,
+      playerTile: [
+        Math.floor(W2.player.x / W2.TILE),
+        Math.floor(W2.player.y / W2.TILE)
+      ],
+      playerDir: W2.player.dir,
+      playerFrame: W2.player.frame,
+      npcCount: W2.npcs.length
+    };
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/53-boot2d.js ==== -->
+<script>
+/* 53-boot2d.js — 2D 模式启动器
+ *
+ * 【职责】
+ *   把 Canvas2D 渲染层 + 瓦片图集 + 2D 世界串起来，
+ *   接管主循环，完全绕开 three.js。
+ *
+ * 【怎么启用】
+ *   game.html?mode=2d
+ *
+ * 【为什么独立一个文件而不改 91-main.js】
+ * 旧主循环绑定 three.js 的 scene/camera/pixels，改动面太大。
+ * 2D 模式用**自己的循环**，与旧循环并列，互不干扰。
+ * 等 2D 版验证通过后，再决定是否整体切换。
+ */
+(function (G) {
+  'use strict';
+
+  var B = G.boot2d = {};
+
+  B.running = false;
+  B.lastTime = 0;
+  B.errors = [];
+
+  /**
+   * 启动 2D 模式。
+   * @returns {Promise<boolean>}
+   */
+  B.start = function () {
+    // ---- 1. 加载图集 ----
+    if (G.loading) {
+      G.loading.build();
+      G.loading.setMessage('加载瓦片图集…');
+    }
+
+    return G.tiles16.load(function (done, total, name) {
+      if (G.loading) G.loading.setProgress(done, total, name);
+    }).then(function (ok) {
+      if (!ok) throw new Error('图集加载失败');
+
+      // ---- 2. 初始化渲染层 ----
+      var canvas = document.getElementById('gl');
+      if (!canvas) throw new Error('找不到 canvas');
+      if (!G.render2d.init(canvas)) throw new Error('render2d 初始化失败');
+
+      // ---- 3. 构建地图 ----
+      G.world2d.buildTown();
+
+      // ---- 4. 相机对准玩家 ----
+      var p = G.world2d.player;
+      G.render2d.camFollow(p.x, p.y, true);
+
+      // ---- 5. 隐藏旧的 UI 层与启动遮罩 ----
+      //
+      // 【踩过的坑：画面画出来了但看不见】
+      // #boot 是 HTML 里的启动遮罩（z-index 100），原本由 bootShell() 隐藏。
+      // 2D 模式不走 bootShell，所以它一直盖在 canvas 上，
+      // 表现为"渲染数据全对、截图却是 loading 页"。
+      var ui = document.getElementById('ui');
+      if (ui) ui.style.display = 'none';
+
+      var bootMask = document.getElementById('boot');
+      if (bootMask) {
+        bootMask.style.transition = 'opacity .4s ease';
+        bootMask.style.opacity = '0';
+        setTimeout(function () {
+          if (bootMask.parentNode) bootMask.parentNode.removeChild(bootMask);
+        }, 450);
+      }
+
+      // 也清掉 errbox（如果有残留）
+      var errbox = document.getElementById('errbox');
+      if (errbox) errbox.style.display = 'none';
+
+      // ---- 6. 启动循环 ----
+      B.running = true;
+      B.lastTime = performance.now();
+      requestAnimationFrame(B.loop);
+
+      window.addEventListener('resize', function () {
+        if (G.render2d) G.render2d.resize();
+      });
+
+      if (G.loading) G.loading.hide();
+
+      window.__GAME_READY__ = true;
+      console.log('[boot2d] 就绪 ' + JSON.stringify(G.world2d.info()));
+      return true;
+    });
+  };
+
+  B.loop = function (now) {
+    if (!B.running) return;
+    requestAnimationFrame(B.loop);
+
+    var dt = (now - B.lastTime) / 1000;
+    B.lastTime = now;
+    if (dt > 0.1) dt = 0.1;   // 防止切后台回来的巨帧
+    if (dt < 0) dt = 0;
+
+    try {
+      G.world2d.update(dt, G.input);
+      G.render2d.camUpdate(dt);
+      G.world2d.draw();
+    } catch (e) {
+      // 避免每帧刷屏
+      if (B.errors.length < 5) {
+        B.errors.push(String(e && e.message ? e.message : e));
+        console.error('[boot2d]', e);
+      }
+    }
+  };
+
+  B.stop = function () {
+    B.running = false;
+  };
+
+})(window.G = window.G || {});
+
+</script>
 <!-- ==== src/53-dungeon.js ==== -->
 <script>
 /* 53-dungeon.js — 副本：独立场景切换
@@ -15809,6 +16770,35 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   // =====================================================================
 
   G.boot = function () {
+    // =====================================================================
+    // 【2D 模式分流】
+    //
+    // ?mode=2d 走**完全独立**的 Canvas 2D 渲染管线：
+    //   不建 three.js 场景、不用 WebGL、不用正交相机。
+    // 这条路线是为了彻底摆脱"3D 引擎 + 像素贴图"导致的
+    // 图层穿透 / 角色消失 / 纹理混乱。
+    //
+    // 不带参数时仍走原来的 3D 路线，互不影响。
+    // =====================================================================
+    var use2d = false;
+    try {
+      var q2 = new URLSearchParams(window.location.search);
+      use2d = (q2.get('mode') === '2d');
+    } catch (e) { use2d = false; }
+
+    if (use2d && G.boot2d) {
+      // 2D 模式需要 input 先初始化（读键盘）
+      var canvas2 = document.getElementById('gl');
+      if (canvas2 && G.input) G.input.init(canvas2);
+      G.boot2d.start().catch(function (err) {
+        console.error('[boot] 2D 启动失败:', err);
+        if (G.loading) {
+          G.loading.setMessage('2D 启动失败: ' + (err && err.message ? err.message : err));
+        }
+      });
+      return;
+    }
+
     // =====================================================================
     // 【加载页】
     //
