@@ -49,14 +49,24 @@
       var p = G.world2d.player;
       G.render2d.camFollow(p.x, p.y, true);
 
-      // ---- 5. 隐藏旧的 UI 层与启动遮罩 ----
+      // ---- 5. 隐藏启动遮罩，但**保留 UI 层** ----
       //
-      // 【踩过的坑：画面画出来了但看不见】
-      // #boot 是 HTML 里的启动遮罩（z-index 100），原本由 bootShell() 隐藏。
+      // 【踩过的坑：UI 全丢了】
+      // 第一版在这里写了 `ui.style.display = 'none'`，把整个 HUD 关掉了 ——
+      // 用户进游戏看到的是"只有地图，没有血条、没有技能栏、没有任务提示"。
+      //
+      // 实际上 #ui 是 HUD 层（血条/技能栏/任务追踪/小地图），
+      // 2D 模式**仍然需要它**，只是它上面的坐标/血量数据来自 3D 的 player 模块。
+      // 所以这里改成：保留 #ui，只把启动遮罩 #boot 淡出。
+      //
+      // 【另一个坑】#boot 是 z-index 100 的启动遮罩，原本由 bootShell() 隐藏。
       // 2D 模式不走 bootShell，所以它一直盖在 canvas 上，
       // 表现为"渲染数据全对、截图却是 loading 页"。
       var ui = document.getElementById('ui');
-      if (ui) ui.style.display = 'none';
+      if (ui) {
+        ui.style.display = '';       // 确保是显示状态
+        ui.style.zIndex = '10';
+      }
 
       var bootMask = document.getElementById('boot');
       if (bootMask) {
@@ -67,9 +77,42 @@
         }, 450);
       }
 
-      // 也清掉 errbox（如果有残留）
+      // errbox 是错误浮层，没有错误时不显示
       var errbox = document.getElementById('errbox');
       if (errbox) errbox.style.display = 'none';
+
+      // ---- 5b. 角色外观预合成 ----
+      //
+      // 原素材是裸模（光头白身）。G.charSkin 会为每个外观合成
+      // 一整张四向图集（4 行 × 7 帧 = 28 帧），启动时做一次，
+      // 运行时只查表取帧。
+      if (G.charSkin) {
+        try {
+          G.charSkin.prewarm();
+          console.log('[boot2d] 角色外观已预合成: ' +
+            Object.keys(G.charSkin._cache).join(','));
+        } catch (e) {
+          console.warn('[boot2d] 外观合成失败:', e && e.message);
+        }
+      }
+
+      // ---- 5c. 初始化 HUD ----
+      //
+      // UI 模块（70-ui.js）依赖 G.player.state 渲染血条/等级。
+      // 2D 模式没有 3D 的 player 模块，用 G.hud2d 造一个最小替身，
+      // 让现有 HUD 直接可用，不必改 70-ui.js（3D 路线还在用）。
+      if (G.hud2d) {
+        try {
+          G.hud2d.init();
+          console.log('[boot2d] HUD 已初始化');
+        } catch (e) {
+          console.warn('[boot2d] HUD 初始化失败:', e && e.message);
+        }
+      } else if (G.ui && !G.ui.root) {
+        try { G.ui.init(); } catch (e) {
+          console.warn('[boot2d] UI 初始化失败:', e && e.message);
+        }
+      }
 
       // ---- 6. 启动循环 ----
       B.running = true;
@@ -101,6 +144,9 @@
       G.world2d.update(dt, G.input);
       G.render2d.camUpdate(dt);
       G.world2d.draw();
+
+      // HUD 每帧刷新（血条/等级/任务追踪）
+      if (G.hud2d) G.hud2d.update(dt);
     } catch (e) {
       // 避免每帧刷屏
       if (B.errors.length < 5) {

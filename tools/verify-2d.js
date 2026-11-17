@@ -238,7 +238,71 @@ async function main() {
   })()`);
   check('NPC 已放置', npcs.count >= 4, npcs.names.join(' '));
 
-  // ---- 10. 无错误 ----
+  // ---- 10. UI 层可见且已填充 ----
+  //
+  // 【为什么必须断言这个】
+  // 第一版在 boot2d 里写了 `ui.style.display='none'`，
+  // 把整个 HUD 关掉了 —— 用户进游戏看到"只有地图，没有血条、技能栏"。
+  // 这是把 UI 当成"启动遮罩"误伤的结果，必须钉死。
+  const ui = await cdp.eval(`(function(){
+    var el = document.getElementById('ui');
+    return {
+      exists: !!el,
+      display: el ? getComputedStyle(el).display : null,
+      children: el ? el.children.length : 0,
+      uiRoot: !!(G.ui && G.ui.root),
+      hpText: (G.ui && G.ui.hpText) ? G.ui.hpText.textContent : null,
+      hpWidth: (G.ui && G.ui.hpFill) ? G.ui.hpFill.style.width : null
+    };
+  })()`);
+  check('**UI 层可见**（不是被隐藏）', ui.exists && ui.display !== 'none',
+    'display=' + ui.display + ' children=' + ui.children);
+  check('HUD 已初始化并显示数值', ui.uiRoot === true && !!ui.hpText,
+    'HP: ' + ui.hpText + '  width=' + ui.hpWidth);
+
+  // ---- 11. 角色外观（不是光头裸模）----
+  const skin = await cdp.eval(`(function(){
+    return {
+      hasSkin: !!G.charSkin,
+      looks: G.charSkin ? Object.keys(G.charSkin.LOOKS) : [],
+      cached: G.charSkin ? Object.keys(G.charSkin._cache) : [],
+      playerLook: G.world2d.player.look,
+      npcLooks: G.world2d.npcs.map(function(n){ return n.look; })
+    };
+  })()`);
+  check('**角色有外观图层**（不是光头裸模）',
+    skin.hasSkin && skin.cached.length >= 5,
+    skin.cached.join(','));
+  check('玩家与 NPC 都分配了外观',
+    !!skin.playerLook && skin.npcLooks.every(function (l) { return !!l; }),
+    'player=' + skin.playerLook + '  npc=' + skin.npcLooks.join(','));
+
+  // ---- 12. 合成后的头部确实是头发色 ----
+  //
+  // 判据：原图头部是肤色（R>200），合成后应该是深色头发（R<120）。
+  // 直接采样像素比较，不靠"看起来像"。
+  const skinPixels = await cdp.eval(`(function(){
+    var s = G.charSkin.sheetFor('player');
+    if (!s) return null;
+    var g = s.canvas.getContext('2d');
+    var hairPx = g.getImageData(14, 15, 4, 1).data;
+    return {
+      hairRGB: [hairPx[0], hairPx[1], hairPx[2]],
+      sheetW: s.canvas.width,
+      sheetH: s.canvas.height
+    };
+  })()`);
+  const isDarkHair = skinPixels &&
+    skinPixels.hairRGB[0] < 120 &&
+    skinPixels.hairRGB[1] < 120 &&
+    skinPixels.hairRGB[2] < 120;
+  check('**合成后头部是头发色**（不是原图肤色）', isDarkHair,
+    'RGB=' + (skinPixels ? skinPixels.hairRGB.join(',') : 'null'));
+  check('四向图集尺寸正确（224×256）',
+    skinPixels && skinPixels.sheetW === 224 && skinPixels.sheetH === 256,
+    skinPixels ? skinPixels.sheetW + '×' + skinPixels.sheetH : 'null');
+
+  // ---- 13. 无错误 ----
   check('全程无 JS 错误', errors.length === 0, errors.length + ' errors');
 
   await b.kill();

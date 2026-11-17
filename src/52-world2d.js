@@ -144,15 +144,16 @@
       frame: 0,
       animT: 0,
       moving: false,
+      look: 'player',          // 外观（见 G.charSkin.LOOKS）
       speed: 130
     };
 
     // ---- 9. NPC：4 个，站在房子门口与路旁 ----
     W2.npcs = [
-      { x: 13 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '千絵' },
-      { x: 27 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '鉄次' },
-      { x: 12 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: '杏' },
-      { x: 28 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: 'ろじ' }
+      { x: 13 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '千絵', look: 'npcA' },
+      { x: 27 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '鉄次', look: 'npcB' },
+      { x: 12 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: '杏',   look: 'npcC' },
+      { x: 28 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: 'ろじ', look: 'npcD' }
     ];
 
     return W2.map;
@@ -287,10 +288,21 @@
     // ---- 角色层：按 y 排序 ----
     R.clearSprites();
 
+    // 【角色外观】
+    // 原素材是裸模（光头白身），由 G.charSkin 程序化叠上发型与和服。
+    // 每个外观的整张四向图集在启动时预合成一次，运行时只是查表取帧。
+    function frameOf(look, dir, frame) {
+      if (G.charSkin) {
+        var s = G.charSkin.frame(look, dir, frame);
+        if (s) return s;
+      }
+      // 兜底：没有 charSkin 就用原图集（裸模）
+      return G.tiles16.charFrame(dir, frame);
+    }
+
     // NPC
-    var npcFrames = [0, 0, 0, 0];
     W2.npcs.forEach(function (n) {
-      var f = G.tiles16.charFrame(n.dir, 0);
+      var f = frameOf(n.look || 'npcA', n.dir, 0);
       if (!f) return;
       R.pushSprite({
         img: f.img, sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh,
@@ -302,7 +314,7 @@
 
     // 玩家
     var p = W2.player;
-    var pf = G.tiles16.charFrame(p.dir, p.frame);
+    var pf = frameOf(p.look || 'player', p.dir, p.frame);
     if (pf) {
       R.pushSprite({
         img: pf.img, sx: pf.sx, sy: pf.sy, sw: pf.sw, sh: pf.sh,

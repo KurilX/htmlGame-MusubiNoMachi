@@ -771,7 +771,7 @@ canvas#gl {
   color: rgba(232,224,216,0.24);
 }
 </style>
-<!-- 构建产物：2026-11-17T07:46:21.396Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-17T08:10:58.572Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -13298,15 +13298,16 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       frame: 0,
       animT: 0,
       moving: false,
+      look: 'player',          // 外观（见 G.charSkin.LOOKS）
       speed: 130
     };
 
     // ---- 9. NPC：4 个，站在房子门口与路旁 ----
     W2.npcs = [
-      { x: 13 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '千絵' },
-      { x: 27 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '鉄次' },
-      { x: 12 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: '杏' },
-      { x: 28 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: 'ろじ' }
+      { x: 13 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '千絵', look: 'npcA' },
+      { x: 27 * W2.TILE, y: 12 * W2.TILE, dir: 0, name: '鉄次', look: 'npcB' },
+      { x: 12 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: '杏',   look: 'npcC' },
+      { x: 28 * W2.TILE, y: 25 * W2.TILE, dir: 1, name: 'ろじ', look: 'npcD' }
     ];
 
     return W2.map;
@@ -13441,10 +13442,21 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     // ---- 角色层：按 y 排序 ----
     R.clearSprites();
 
+    // 【角色外观】
+    // 原素材是裸模（光头白身），由 G.charSkin 程序化叠上发型与和服。
+    // 每个外观的整张四向图集在启动时预合成一次，运行时只是查表取帧。
+    function frameOf(look, dir, frame) {
+      if (G.charSkin) {
+        var s = G.charSkin.frame(look, dir, frame);
+        if (s) return s;
+      }
+      // 兜底：没有 charSkin 就用原图集（裸模）
+      return G.tiles16.charFrame(dir, frame);
+    }
+
     // NPC
-    var npcFrames = [0, 0, 0, 0];
     W2.npcs.forEach(function (n) {
-      var f = G.tiles16.charFrame(n.dir, 0);
+      var f = frameOf(n.look || 'npcA', n.dir, 0);
       if (!f) return;
       R.pushSprite({
         img: f.img, sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh,
@@ -13456,7 +13468,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     // 玩家
     var p = W2.player;
-    var pf = G.tiles16.charFrame(p.dir, p.frame);
+    var pf = frameOf(p.look || 'player', p.dir, p.frame);
     if (pf) {
       R.pushSprite({
         img: pf.img, sx: pf.sx, sy: pf.sy, sw: pf.sw, sh: pf.sh,
@@ -13544,14 +13556,24 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       var p = G.world2d.player;
       G.render2d.camFollow(p.x, p.y, true);
 
-      // ---- 5. 隐藏旧的 UI 层与启动遮罩 ----
+      // ---- 5. 隐藏启动遮罩，但**保留 UI 层** ----
       //
-      // 【踩过的坑：画面画出来了但看不见】
-      // #boot 是 HTML 里的启动遮罩（z-index 100），原本由 bootShell() 隐藏。
+      // 【踩过的坑：UI 全丢了】
+      // 第一版在这里写了 `ui.style.display = 'none'`，把整个 HUD 关掉了 ——
+      // 用户进游戏看到的是"只有地图，没有血条、没有技能栏、没有任务提示"。
+      //
+      // 实际上 #ui 是 HUD 层（血条/技能栏/任务追踪/小地图），
+      // 2D 模式**仍然需要它**，只是它上面的坐标/血量数据来自 3D 的 player 模块。
+      // 所以这里改成：保留 #ui，只把启动遮罩 #boot 淡出。
+      //
+      // 【另一个坑】#boot 是 z-index 100 的启动遮罩，原本由 bootShell() 隐藏。
       // 2D 模式不走 bootShell，所以它一直盖在 canvas 上，
       // 表现为"渲染数据全对、截图却是 loading 页"。
       var ui = document.getElementById('ui');
-      if (ui) ui.style.display = 'none';
+      if (ui) {
+        ui.style.display = '';       // 确保是显示状态
+        ui.style.zIndex = '10';
+      }
 
       var bootMask = document.getElementById('boot');
       if (bootMask) {
@@ -13562,9 +13584,42 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         }, 450);
       }
 
-      // 也清掉 errbox（如果有残留）
+      // errbox 是错误浮层，没有错误时不显示
       var errbox = document.getElementById('errbox');
       if (errbox) errbox.style.display = 'none';
+
+      // ---- 5b. 角色外观预合成 ----
+      //
+      // 原素材是裸模（光头白身）。G.charSkin 会为每个外观合成
+      // 一整张四向图集（4 行 × 7 帧 = 28 帧），启动时做一次，
+      // 运行时只查表取帧。
+      if (G.charSkin) {
+        try {
+          G.charSkin.prewarm();
+          console.log('[boot2d] 角色外观已预合成: ' +
+            Object.keys(G.charSkin._cache).join(','));
+        } catch (e) {
+          console.warn('[boot2d] 外观合成失败:', e && e.message);
+        }
+      }
+
+      // ---- 5c. 初始化 HUD ----
+      //
+      // UI 模块（70-ui.js）依赖 G.player.state 渲染血条/等级。
+      // 2D 模式没有 3D 的 player 模块，用 G.hud2d 造一个最小替身，
+      // 让现有 HUD 直接可用，不必改 70-ui.js（3D 路线还在用）。
+      if (G.hud2d) {
+        try {
+          G.hud2d.init();
+          console.log('[boot2d] HUD 已初始化');
+        } catch (e) {
+          console.warn('[boot2d] HUD 初始化失败:', e && e.message);
+        }
+      } else if (G.ui && !G.ui.root) {
+        try { G.ui.init(); } catch (e) {
+          console.warn('[boot2d] UI 初始化失败:', e && e.message);
+        }
+      }
 
       // ---- 6. 启动循环 ----
       B.running = true;
@@ -13596,6 +13651,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       G.world2d.update(dt, G.input);
       G.render2d.camUpdate(dt);
       G.world2d.draw();
+
+      // HUD 每帧刷新（血条/等级/任务追踪）
+      if (G.hud2d) G.hud2d.update(dt);
     } catch (e) {
       // 避免每帧刷屏
       if (B.errors.length < 5) {
@@ -13607,6 +13665,352 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
   B.stop = function () {
     B.running = false;
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/54-hud2d.js ==== -->
+<script>
+/* 54-hud2d.js — 2D 模式的 HUD 桥接
+ *
+ * 【为什么需要】
+ * 2D 模式不构建 3D 世界，所以没有 G.player（那是 3D 玩家模块）。
+ * 但 HUD（src/70-ui.js）的 update() 直接读 G.player.state 的
+ * hp / maxHp / exp / level 等字段 —— 没有它就 return，HUD 一片空白。
+ *
+ * 本文件提供 G.player.state 的**最小替身**，让现有 HUD 直接可用，
+ * 不用改 70-ui.js（它还有 3D 路线在用，不能动）。
+ *
+ * 【设计原则】
+ *   - 只提供 HUD 真正读的字段
+ *   - 数值来自 2D 玩家，后续接真实战斗时再扩展
+ */
+(function (G) {
+  'use strict';
+
+  var H = G.hud2d = {};
+
+  /** 建立 G.player 替身（幂等） */
+  H.bind = function () {
+    if (G.player && G.player.state) {
+      // 3D 路线已经建过，不动它
+      return G.player.state;
+    }
+
+    G.player = G.player || {};
+
+    G.player.state = {
+      // ---- HUD 读取的字段 ----
+      hp: 100,
+      maxHp: 100,
+      exp: 0,
+      expNext: 100,
+      level: 1,
+      lv: 1,                    // 有些地方用 lv
+      name: '旅人',
+      money: 0,
+      gold: 0,                  // 兼容
+      stamina: 100,
+      maxStamina: 100,
+
+      // ---- 位置（HUD 的小地图/坐标可能用）----
+      x: 0,
+      y: 0,
+      z: 0,
+
+      // ---- 战斗态（2D 版暂无战斗）----
+      dead: false,
+      dodgeCd: 0,
+      invuln: 0,
+
+      // ---- 技能冷却占位 ----
+      cds: [0, 0, 0, 0],
+
+      // ---- 标记来源，便于调试 ----
+      __is2dStub: true
+    };
+
+    // HUD 里会调用的一些方法，给个空实现避免报错
+    G.player.isDead = function () { return !!G.player.state.dead; };
+    G.player.hp = function () { return G.player.state.hp; };
+    G.player.maxHp = function () { return G.player.state.maxHp; };
+
+    return G.player.state;
+  };
+
+  /** 让 2D 玩家的位置同步到替身 state（HUD 可能需要） */
+  H.sync = function () {
+    var st = G.player && G.player.state;
+    var p = G.world2d && G.world2d.player;
+    if (!st || !p || !st.__is2dStub) return;
+    st.x = p.x;
+    st.y = p.y;
+    st.z = 0;
+  };
+
+  /** 初始化 HUD（如果还没建） */
+  H.init = function () {
+    H.bind();
+    if (!G.ui) return false;
+
+    try {
+      if (!G.ui.root) G.ui.init();
+      return true;
+    } catch (e) {
+      console.warn('[hud2d] UI 初始化失败:', e && e.message);
+      return false;
+    }
+  };
+
+  /** 每帧更新 HUD */
+  H.update = function (dt) {
+    H.sync();
+    if (G.ui && G.ui.update) {
+      try { G.ui.update(dt); } catch (e) { /* 静默，别拖垮主循环 */ }
+    }
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/55-char-skin.js ==== -->
+<script>
+/* 55-char-skin.js — 给角色加外观（发型 / 和服配色）
+ *
+ * 【为什么需要】
+ * RPG16 的 14_human_sprite_base.png 是**裸模**：光头、白身、红色裤子。
+ * 用户反馈"角色有点太丑了，怎么全是光头"。
+ *
+ * 素材包里没有配套的发型/服装图层（已确认：zip 里只有这一个角色图集）。
+ *
+ * 【做法：程序化叠层，不重画原图】
+ * 在离屏 canvas 上：
+ *   1) 先画原始帧（保证四向行走的动作全对）
+ *   2) 再按像素坐标覆盖：头顶画头发、躯干画和服、腰部画腰带
+ *
+ * 关键：**所有覆盖都按像素精确坐标**，来自对原图的逐行扫描：
+ *   y 14~22  头部（肤色）
+ *   y 22~30  头发/脖子过渡
+ *   y 30~38  上身
+ *   y 38~48  裤/裙
+ *   y 48~50  脚
+ *
+ * 【为什么不用 assets/pack/chars 的守卫】
+ * 那 6 个角色是 768×192、**只有朝下方向**，没有左右上下四向，
+ * 无法用于 2D 四向行走。
+ */
+(function (G) {
+  'use strict';
+
+  var S = G.charSkin = {};
+
+  S.TILE_W = 32;   // 单帧宽
+  S.TILE_H = 64;   // 单帧高
+
+  // 原图里各部分的行范围（逐行扫描实测）
+  S.HEAD_TOP = 13;
+  S.HEAD_BOT = 23;     // 头顶到下巴
+  S.HAIR_TOP = 13;     // 头发从这里开始盖
+  S.HAIR_BOT = 24;
+  S.BODY_TOP = 29;
+  S.BODY_BOT = 39;     // 和服覆盖范围
+  S.LEG_TOP = 39;
+  S.LEG_BOT = 48;
+
+  /** 预设外观 */
+  S.LOOKS = {
+    // 玩家：深蓝和服 + 黑发
+    player: {
+      hair: '#2E2A38', hairHi: '#332E40',
+      robe: '#3E5A8C', robeHi: '#5578B0', robeSh: '#2A3E62',
+      obi: '#D8B45A', obiSh: '#A88838'
+    },
+    // NPC：粉和服 + 棕发
+    npcA: {
+      hair: '#5A3A2A', hairHi: '#634234',
+      robe: '#D888A8', robeHi: '#F0A8C4', robeSh: '#B06888',
+      obi: '#7FB069', obiSh: '#5C8A4A'
+    },
+    // NPC：绿和服 + 灰发（老人）
+    npcB: {
+      hair: '#A8A8B0', hairHi: '#B0B0B8',
+      robe: '#6B8A5A', robeHi: '#8AA878', robeSh: '#4E6642',
+      obi: '#8A6A3A', obiSh: '#6A4E28'
+    },
+    // NPC：米白和服 + 黑发（女性）
+    npcC: {
+      hair: '#241E28', hairHi: '#2A2430',
+      robe: '#E8E0D0', robeHi: '#FFF8EC', robeSh: '#C0B8A8',
+      obi: '#C05A5A', obiSh: '#963E3E'
+    },
+    // NPC：紫和服 + 深发
+    npcD: {
+      hair: '#3A2A38', hairHi: '#42323F',
+      robe: '#7A5A8C', robeHi: '#9C7EB0', robeSh: '#5A4068',
+      obi: '#E8C25A', obiSh: '#B89840'
+    }
+  };
+
+  /**
+   * 给一个角色帧加上外观。
+   * @param {CanvasRenderingContext2D} srcCtx 原图集上下文
+   * @param {number} dir   0=下 1=上 2=左 3=右
+   * @param {number} frame 0~6
+   * @param {object} look  外观配置
+   * @returns {HTMLCanvasElement} 合成后的 32×64 画布
+   */
+  S.compose = function (srcCtx, dir, frame, look) {
+    var W = S.TILE_W, H = S.TILE_H;
+    var cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    var g = cv.getContext('2d');
+    g.imageSmoothingEnabled = false;
+
+    // ---- 1. 先画原始帧（保证动作正确）----
+    g.drawImage(
+      srcCtx.canvas,
+      frame * 32, dir * 64, 32, 64,
+      0, 0, 32, 64
+    );
+
+    // ---- 2. 换衣服（覆盖躯干与腿）----
+    //
+    // 用 source-atop 保证只覆盖原图已有的不透明像素，
+    // 不会把透明背景涂成色块。
+    g.globalCompositeOperation = 'source-atop';
+
+    // 躯干：和服主色
+    g.fillStyle = look.robe;
+    g.fillRect(4, S.BODY_TOP, 24, S.BODY_BOT - S.BODY_TOP);
+
+    // 躯干高光（左侧受光，2px 宽即可，别太宽否则像花纹）
+    g.fillStyle = look.robeHi;
+    g.fillRect(5, S.BODY_TOP + 1, 2, S.BODY_BOT - S.BODY_TOP - 2);
+
+    // 躯干暗部（右侧）
+    g.fillStyle = look.robeSh;
+    g.fillRect(26, S.BODY_TOP, 2, S.BODY_BOT - S.BODY_TOP);
+
+    // 腰带（只占 2px，不要宽条）
+    //
+    // 【踩过的坑】第一版画了 3px 高 + 底部再加 1px 暗线 = 4px，
+    // 而躯干本身只有 10px 高，腰带占了近一半，看起来像救生圈。
+    g.fillStyle = look.obi;
+    g.fillRect(4, S.BODY_BOT - 2, 24, 2);
+
+    // 腿部（裤/裙）：用和服暗色，不再是大红裤
+    g.fillStyle = look.robeSh;
+    g.fillRect(4, S.BODY_BOT, 24, S.LEG_BOT - S.BODY_BOT);
+
+    // ---- 3. 加头发 ----
+    //
+    // 头顶到下巴之间的上半部分是头发覆盖区。
+    // 不同朝向要留出脸的位置：
+    //   朝下(0)：额头以上盖住，下巴露脸
+    //   朝上(1)：整个后脑全是头发
+    //   左(2)/右(3)：盖右半边或左半边
+    g.fillStyle = look.hair;
+
+    if (dir === 1) {
+      // 朝上：整块后脑都是头发
+      g.fillRect(5, S.HAIR_TOP, 22, S.HEAD_BOT - S.HAIR_TOP + 2);
+    } else if (dir === 0) {
+      // 朝下：盖额头，留出脸
+      g.fillRect(5, S.HAIR_TOP, 22, 7);
+      // 两侧鬓角
+      g.fillRect(5, S.HAIR_TOP + 7, 3, 5);
+      g.fillRect(24, S.HAIR_TOP + 7, 3, 5);
+    } else if (dir === 2) {
+      // 朝左：头发偏后半边
+      g.fillRect(5, S.HAIR_TOP, 22, 8);
+      g.fillRect(16, S.HAIR_TOP + 8, 11, 6);
+    } else {
+      // 朝右
+      g.fillRect(5, S.HAIR_TOP, 22, 8);
+      g.fillRect(5, S.HAIR_TOP + 8, 11, 6);
+    }
+
+    // 头发高光
+    //
+    // 【踩过的坑】第一版画了 12px 宽 × 2px 高的亮条，
+    // 小尺寸下看起来像"头上一道黄线"。
+    // 改成：只在头顶偏左画一小块柔和高光（4×2），并降低对比。
+    if (dir !== 1) {
+      g.fillStyle = look.hairHi;
+      g.fillRect(9, S.HAIR_TOP + 1, 4, 2);
+    } else {
+      // 朝上看不到高光，只在后脑留一点点
+      g.fillStyle = look.hairHi;
+      g.fillRect(10, S.HAIR_TOP + 1, 3, 1);
+    }
+
+    g.globalCompositeOperation = 'source-over';
+    return cv;
+  };
+
+  // =====================================================================
+  // 预合成整张图集（性能关键：每帧只做一次）
+  // =====================================================================
+  S._cache = {};
+
+  /**
+   * 为某个外观生成**完整的四向图集**（4 行 × 7 帧）。
+   * 返回 { canvas, ready }
+   */
+  S.sheetFor = function (lookName) {
+    if (S._cache[lookName]) return S._cache[lookName];
+
+    var look = S.LOOKS[lookName] || S.LOOKS.player;
+    var srcImg = G.tiles16 && G.tiles16.sheets.chars;
+    if (!srcImg) return null;
+
+    // 原图集需要一个 ctx 才能被 drawImage 裁切
+    var srcCv = document.createElement('canvas');
+    srcCv.width = srcImg.width;
+    srcCv.height = srcImg.height;
+    var srcCtx = srcCv.getContext('2d');
+    srcCtx.imageSmoothingEnabled = false;
+    srcCtx.drawImage(srcImg, 0, 0);
+
+    var sheetW = 32 * 7;
+    var sheetH = 64 * 4;
+    var out = document.createElement('canvas');
+    out.width = sheetW;
+    out.height = sheetH;
+    var g = out.getContext('2d');
+    g.imageSmoothingEnabled = false;
+
+    for (var d = 0; d < 4; d++) {
+      for (var f = 0; f < 7; f++) {
+        var frameCv = S.compose(srcCtx, d, f, look);
+        g.drawImage(frameCv, f * 32, d * 64);
+      }
+    }
+
+    var rec = { canvas: out, ready: true };
+    S._cache[lookName] = rec;
+    return rec;
+  };
+
+  /** 取某一帧 */
+  S.frame = function (lookName, dir, frame) {
+    var sheet = S.sheetFor(lookName);
+    if (!sheet) return null;
+    return {
+      img: sheet.canvas,
+      sx: frame * 32,
+      sy: dir * 64,
+      sw: 32,
+      sh: 64
+    };
+  };
+
+  /** 预热全部外观（启动时调一次） */
+  S.prewarm = function (names) {
+    (names || Object.keys(S.LOOKS)).forEach(function (n) {
+      S.sheetFor(n);
+    });
   };
 
 })(window.G = window.G || {});
