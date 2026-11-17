@@ -60,7 +60,10 @@
     });
 
     // 视觉
-    G.fx.moonSlash(st.x, st.z, angle, def.radius);
+    // 【必须传 arc】特效张角要与上面的判定用**同一个 def.arc**。
+    // 曾经这里不传，moonSlash 内部写死 PI*0.72（129.6°），
+    // 而判定是 def.arc（108°）—— 特效比判定宽 20%，看着中了却没伤害。
+    G.fx.moonSlash(st.x, st.z, angle, def.radius, def.arc);
     G.camera.shakeAdd(def.shake, 0.18);
     G.bus.emit('sfx', def.sfx);
     st.attackAnim = 0.3;

@@ -903,16 +903,108 @@
       var sp = W.isNight() ? def.night : def.day;
       m.position.set(sp.x, W.groundY(sp.x, sp.z) + 1.225, sp.z);
       W.scene.add(m);
+
+      // =============================================================
+      // 【2026-11 修：NPC 太扁平、看不见】
+      //
+      // 用户反馈「npc太扁平了，根本看不见」。实测原因有三：
+      //
+      //  1) **NPC 没有落地阴影** —— 玩家和敌人都有（G.sprite.makeShadow），
+      //     只有 NPC 没有。billboard 是贴在地面上方的平面，
+      //     没有阴影就没有落地感，看起来像浮在背景上的纸片。
+      //
+      //  2) 没有描边 —— 全身 MeshBasicMaterial 平面贴在草地/房子上，
+      //     颜色接近背景，边界糊掉。
+      //
+      //  3) 没有任何"这里有个人"的标识。
+      //
+      // 对症下药：补阴影 + 头顶浮标。
+      // =============================================================
+
+      // 1) 落地阴影（和玩家同款，略小一点）
+      var shadow = G.sprite.makeShadow(1.05);
+      shadow.position.set(sp.x, W.groundY(sp.x, sp.z) + 0.02, sp.z);
+      W.scene.add(shadow);
+
+      // 2) 头顶浮标：一个小菱形 + 上下浮动，让 NPC 在远景里能被一眼看到
+      var marker = W.makeNpcMarker();
+      marker.position.set(sp.x, W.groundY(sp.x, sp.z) + 2.95, sp.z);
+      W.scene.add(marker);
+
       var npc = {
         def: def, look: look, atlas: atlas, mesh: m,
+        shadow: shadow, marker: marker,
         x: sp.x, z: sp.z,
         dir: 4, animPhase: 'idle', animFrame: 0, animT: 0,
+        markerT: Math.random() * Math.PI * 2,
         tick: Math.random() * 3
       };
       G.sprite.update(m, atlas, 4, 'idle', 0);
       W.npcs.push(npc);
       W.addCircleCollider(sp.x, sp.z, 0.4);
     }
+  };
+
+  /**
+   * NPC 头顶的浮标。
+   *
+   * 尺寸依据：视高 viewH=24 时，1 个世界单位 ≈ 屏幕 24px（648/24）。
+   * 所以 0.34 单位只有约 8px —— 在满屏树木房子之间根本看不见（实测截图确认）。
+   * 放大到 0.55（约 13px）再加一根竖直光柱，才能一眼看到。
+   */
+  W.makeNpcMarker = function () {
+    var g = new THREE.Group();
+
+    // 菱形（正方形转 45°）
+    var geo = new THREE.PlaneGeometry(0.55, 0.55);
+    var mat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#F7C8D8'),
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,      // 不被房子/树挡住，始终可见
+      blending: THREE.AdditiveBlending
+    });
+    var d = new THREE.Mesh(geo, mat);
+    d.rotation.z = Math.PI / 4;
+    g.add(d);
+
+    // 中心亮核
+    var coreGeo = new THREE.PlaneGeometry(0.2, 0.2);
+    var coreMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#FFFFFF'),
+      transparent: true,
+      opacity: 0.95,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending
+    });
+    var core = new THREE.Mesh(coreGeo, coreMat);
+    core.rotation.z = Math.PI / 4;
+    g.add(core);
+
+    // 竖直光柱：从浮标往下连到 NPC 头顶。
+    // 只有一颗菱形的话，玩家会以为那是场景装饰；
+    // 一根细光柱把"浮标"和"人"连起来，语义就明确了。
+    var beamGeo = new THREE.PlaneGeometry(0.08, 1.1);
+    var beamMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#F7C8D8'),
+      transparent: true,
+      opacity: 0.32,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending
+    });
+    var beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.y = -0.62;
+    g.add(beam);
+
+    // 让 marker 始终面向相机（billboard）
+    g.userData.isMarker = true;
+    return g;
   };
 
   /** 昼夜切换时把 NPC 挪到对应位置 */
@@ -925,6 +1017,59 @@
       npc.mesh.position.x = target.x;
       npc.mesh.position.z = target.z;
       npc.mesh.position.y = W.groundY(target.x, target.z) + 1.225;
+
+      // 阴影与浮标要跟着走，否则换位后它们留在原地
+      if (npc.shadow) {
+        npc.shadow.position.x = target.x;
+        npc.shadow.position.z = target.z;
+        npc.shadow.position.y = W.groundY(target.x, target.z) + 0.02;
+      }
+      if (npc.marker) {
+        npc.marker.position.x = target.x;
+        npc.marker.position.z = target.z;
+        npc.marker.position.y = W.groundY(target.x, target.z) + 2.95;
+      }
+    }
+  };
+
+  /**
+   * 每帧更新 NPC 的浮标与朝向。
+   *
+   * 【为什么浮标要朝向相机】它是平面（billboard），
+   * 不转向相机的话从侧面看会变成一条线。
+   *
+   * 【为什么浮标要上下浮动】静态图标在满屏树木房子之间仍然不显眼；
+   * 一点点缓慢起伏能让眼睛捕捉到运动，这是最省成本的"可发现性"手段。
+   */
+  W.updateNPCs = function (dt, cameraYaw) {
+    if (!W.npcs) return;
+    for (var i = 0; i < W.npcs.length; i++) {
+      var npc = W.npcs[i];
+      if (!npc.marker) continue;
+
+      npc.markerT = (npc.markerT || 0) + dt * 1.8;
+
+      // 上下浮动 ±0.08
+      var baseY = W.groundY(npc.x, npc.z) + 2.95;
+      npc.marker.position.y = baseY + Math.sin(npc.markerT) * 0.08;
+
+      // 面向相机（与 chibi 用同一套 yaw）
+      if (cameraYaw != null) {
+        npc.marker.rotation.y = cameraYaw;
+      }
+
+      // 亮度脉动：静态图标在满屏树木房子之间仍然不显眼，
+      // 一点点明暗呼吸能让眼睛捕捉到运动 —— 最省成本的"可发现性"手段。
+      var pulse = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(npc.markerT * 1.4));
+      var kids = npc.marker.children;
+      for (var k = 0; k < kids.length; k++) {
+        var m = kids[k].material;
+        if (!m) continue;
+        // 保持相对强弱：菱形 0.85、亮核 0.95、光柱 0.32
+        if (k === 0) m.opacity = 0.85 * pulse;
+        else if (k === 1) m.opacity = 0.95 * pulse;
+        else m.opacity = 0.32 * pulse;
+      }
     }
   };
 
