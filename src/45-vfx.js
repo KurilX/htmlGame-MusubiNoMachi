@@ -91,7 +91,26 @@
   // =====================================================================
   // 月影斩（技能1）：更大更亮的一道
   // =====================================================================
-  V.moonSlash = function (x, z, angle, radius) {
+  /**
+   * 抜刀・月影的挥砍特效。
+   *
+   * 【2026-11 修复：特效范围比判定大，导致"看着打中了却没伤害"】
+   *
+   * 原来这里写死了几何常数，与判定参数对不上：
+   *   特效  外径 radius*1.1、张角 PI*0.72（129.6°）
+   *   判定  外径 radius    、张角 def.arc（108°）
+   * 也就是特效比判定**大 10% 外径、宽 20% 张角** ——
+   * 玩家看着刀光扫到怪，实际判定没覆盖到，非常反直觉。
+   *
+   * 现在改为接收 arc，并且几何直接由 (radius, arc) 推导，
+   * 与 G.combat.cone 的判定用同一组参数。判定画多大，特效就画多大。
+   *
+   * @param {number} arc 扇形张角（弧度），必须与判定传入的 arc 一致
+   */
+  V.moonSlash = function (x, z, angle, radius, arc) {
+    // 兜底：没传 arc 时用技能的默认值，但绝不再用"比判定宽"的常数
+    var span = (arc != null) ? arc : Math.PI * 0.6;
+
     // 两层错开 45ms 出现。用帧循环延迟而不是 setTimeout：
     // setTimeout 不受 hitstop 管辖，停顿期间照常触发，破坏打击感；
     // 而且在低帧率下会和渲染节拍错开，看起来像"两刀只出现一刀"。
@@ -99,8 +118,10 @@
       (function (layerIndex, delaySec) {
         delayed(delaySec, function () {
           if (!G.world.scene) return;
-          var geo = new THREE.RingGeometry(radius * 0.3, radius * 1.1, 20, 1,
-            angle - Math.PI * 0.36 - Math.PI / 2, Math.PI * 0.72);
+          // 内径 0.25 与外径 1.0 都和 slashArc（普攻）保持一致，
+          // 让"普攻"和"技能"两种扇形在视觉上是同一套语言。
+          var geo = new THREE.RingGeometry(radius * 0.25, radius, 24, 1,
+            angle - span / 2 - Math.PI / 2, span);
           var mat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(layerIndex === 0 ? '#DCEFFF' : '#B8DCE8'),
             transparent: true,
@@ -115,7 +136,10 @@
           m.position.set(x, V.atGround(x, z, 0.4 + layerIndex * 0.12), z);
           add(m, 0.28, function (t, self) {
             self.material.opacity = 0.5 * (1 - t) * (1 - t);
-            self.scale.setScalar(1 + t * 0.25);
+            // 【不要放大】原来这里有 scale 1 + t*0.25 的放大动画，
+            // 会让特效在生命周期末超出判定 25%，进一步加剧"看着中了"的错觉。
+            // 改成整体略收缩，视觉上反而更像刀光收敛。
+            self.scale.setScalar(1 - t * 0.08);
           });
         });
       })(k, k * 0.045);
@@ -251,7 +275,9 @@
   };
 
   V.parryFlash = function (x, z, angle) {
-    V.moonSlash(x, z, angle, 3.2);
+    // 与 S.tryParry 的判定保持一致：arc = PI*0.5、radius = def.radius(3.2)。
+    // 不传 arc 会退化成默认值，与判定不符。
+    V.moonSlash(x, z, angle, 3.2, Math.PI * 0.5);
     // 金色爆闪
     var geo = new THREE.SphereGeometry(1.2, 10, 8);
     var mat = new THREE.MeshBasicMaterial({

@@ -771,7 +771,7 @@ canvas#gl {
   color: rgba(232,224,216,0.24);
 }
 </style>
-<!-- 构建产物：2026-11-16T09:12:12.083Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-17T02:56:41.443Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -8533,7 +8533,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     });
 
     // 视觉
-    G.fx.moonSlash(st.x, st.z, angle, def.radius);
+    // 【必须传 arc】特效张角要与上面的判定用**同一个 def.arc**。
+    // 曾经这里不传，moonSlash 内部写死 PI*0.72（129.6°），
+    // 而判定是 def.arc（108°）—— 特效比判定宽 20%，看着中了却没伤害。
+    G.fx.moonSlash(st.x, st.z, angle, def.radius, def.arc);
     G.camera.shakeAdd(def.shake, 0.18);
     G.bus.emit('sfx', def.sfx);
     st.attackAnim = 0.3;
@@ -8952,7 +8955,26 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   // =====================================================================
   // 月影斩（技能1）：更大更亮的一道
   // =====================================================================
-  V.moonSlash = function (x, z, angle, radius) {
+  /**
+   * 抜刀・月影的挥砍特效。
+   *
+   * 【2026-11 修复：特效范围比判定大，导致"看着打中了却没伤害"】
+   *
+   * 原来这里写死了几何常数，与判定参数对不上：
+   *   特效  外径 radius*1.1、张角 PI*0.72（129.6°）
+   *   判定  外径 radius    、张角 def.arc（108°）
+   * 也就是特效比判定**大 10% 外径、宽 20% 张角** ——
+   * 玩家看着刀光扫到怪，实际判定没覆盖到，非常反直觉。
+   *
+   * 现在改为接收 arc，并且几何直接由 (radius, arc) 推导，
+   * 与 G.combat.cone 的判定用同一组参数。判定画多大，特效就画多大。
+   *
+   * @param {number} arc 扇形张角（弧度），必须与判定传入的 arc 一致
+   */
+  V.moonSlash = function (x, z, angle, radius, arc) {
+    // 兜底：没传 arc 时用技能的默认值，但绝不再用"比判定宽"的常数
+    var span = (arc != null) ? arc : Math.PI * 0.6;
+
     // 两层错开 45ms 出现。用帧循环延迟而不是 setTimeout：
     // setTimeout 不受 hitstop 管辖，停顿期间照常触发，破坏打击感；
     // 而且在低帧率下会和渲染节拍错开，看起来像"两刀只出现一刀"。
@@ -8960,8 +8982,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       (function (layerIndex, delaySec) {
         delayed(delaySec, function () {
           if (!G.world.scene) return;
-          var geo = new THREE.RingGeometry(radius * 0.3, radius * 1.1, 20, 1,
-            angle - Math.PI * 0.36 - Math.PI / 2, Math.PI * 0.72);
+          // 内径 0.25 与外径 1.0 都和 slashArc（普攻）保持一致，
+          // 让"普攻"和"技能"两种扇形在视觉上是同一套语言。
+          var geo = new THREE.RingGeometry(radius * 0.25, radius, 24, 1,
+            angle - span / 2 - Math.PI / 2, span);
           var mat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(layerIndex === 0 ? '#DCEFFF' : '#B8DCE8'),
             transparent: true,
@@ -8976,7 +9000,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           m.position.set(x, V.atGround(x, z, 0.4 + layerIndex * 0.12), z);
           add(m, 0.28, function (t, self) {
             self.material.opacity = 0.5 * (1 - t) * (1 - t);
-            self.scale.setScalar(1 + t * 0.25);
+            // 【不要放大】原来这里有 scale 1 + t*0.25 的放大动画，
+            // 会让特效在生命周期末超出判定 25%，进一步加剧"看着中了"的错觉。
+            // 改成整体略收缩，视觉上反而更像刀光收敛。
+            self.scale.setScalar(1 - t * 0.08);
           });
         });
       })(k, k * 0.045);
@@ -9112,7 +9139,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   };
 
   V.parryFlash = function (x, z, angle) {
-    V.moonSlash(x, z, angle, 3.2);
+    // 与 S.tryParry 的判定保持一致：arc = PI*0.5、radius = def.radius(3.2)。
+    // 不传 arc 会退化成默认值，与判定不符。
+    V.moonSlash(x, z, angle, 3.2, Math.PI * 0.5);
     // 金色爆闪
     var geo = new THREE.SphereGeometry(1.2, 10, 8);
     var mat = new THREE.MeshBasicMaterial({
@@ -10569,16 +10598,108 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       var sp = W.isNight() ? def.night : def.day;
       m.position.set(sp.x, W.groundY(sp.x, sp.z) + 1.225, sp.z);
       W.scene.add(m);
+
+      // =============================================================
+      // 【2026-11 修：NPC 太扁平、看不见】
+      //
+      // 用户反馈「npc太扁平了，根本看不见」。实测原因有三：
+      //
+      //  1) **NPC 没有落地阴影** —— 玩家和敌人都有（G.sprite.makeShadow），
+      //     只有 NPC 没有。billboard 是贴在地面上方的平面，
+      //     没有阴影就没有落地感，看起来像浮在背景上的纸片。
+      //
+      //  2) 没有描边 —— 全身 MeshBasicMaterial 平面贴在草地/房子上，
+      //     颜色接近背景，边界糊掉。
+      //
+      //  3) 没有任何"这里有个人"的标识。
+      //
+      // 对症下药：补阴影 + 头顶浮标。
+      // =============================================================
+
+      // 1) 落地阴影（和玩家同款，略小一点）
+      var shadow = G.sprite.makeShadow(1.05);
+      shadow.position.set(sp.x, W.groundY(sp.x, sp.z) + 0.02, sp.z);
+      W.scene.add(shadow);
+
+      // 2) 头顶浮标：一个小菱形 + 上下浮动，让 NPC 在远景里能被一眼看到
+      var marker = W.makeNpcMarker();
+      marker.position.set(sp.x, W.groundY(sp.x, sp.z) + 2.95, sp.z);
+      W.scene.add(marker);
+
       var npc = {
         def: def, look: look, atlas: atlas, mesh: m,
+        shadow: shadow, marker: marker,
         x: sp.x, z: sp.z,
         dir: 4, animPhase: 'idle', animFrame: 0, animT: 0,
+        markerT: Math.random() * Math.PI * 2,
         tick: Math.random() * 3
       };
       G.sprite.update(m, atlas, 4, 'idle', 0);
       W.npcs.push(npc);
       W.addCircleCollider(sp.x, sp.z, 0.4);
     }
+  };
+
+  /**
+   * NPC 头顶的浮标。
+   *
+   * 尺寸依据：视高 viewH=24 时，1 个世界单位 ≈ 屏幕 24px（648/24）。
+   * 所以 0.34 单位只有约 8px —— 在满屏树木房子之间根本看不见（实测截图确认）。
+   * 放大到 0.55（约 13px）再加一根竖直光柱，才能一眼看到。
+   */
+  W.makeNpcMarker = function () {
+    var g = new THREE.Group();
+
+    // 菱形（正方形转 45°）
+    var geo = new THREE.PlaneGeometry(0.55, 0.55);
+    var mat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#F7C8D8'),
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,      // 不被房子/树挡住，始终可见
+      blending: THREE.AdditiveBlending
+    });
+    var d = new THREE.Mesh(geo, mat);
+    d.rotation.z = Math.PI / 4;
+    g.add(d);
+
+    // 中心亮核
+    var coreGeo = new THREE.PlaneGeometry(0.2, 0.2);
+    var coreMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#FFFFFF'),
+      transparent: true,
+      opacity: 0.95,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending
+    });
+    var core = new THREE.Mesh(coreGeo, coreMat);
+    core.rotation.z = Math.PI / 4;
+    g.add(core);
+
+    // 竖直光柱：从浮标往下连到 NPC 头顶。
+    // 只有一颗菱形的话，玩家会以为那是场景装饰；
+    // 一根细光柱把"浮标"和"人"连起来，语义就明确了。
+    var beamGeo = new THREE.PlaneGeometry(0.08, 1.1);
+    var beamMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#F7C8D8'),
+      transparent: true,
+      opacity: 0.32,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending
+    });
+    var beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.y = -0.62;
+    g.add(beam);
+
+    // 让 marker 始终面向相机（billboard）
+    g.userData.isMarker = true;
+    return g;
   };
 
   /** 昼夜切换时把 NPC 挪到对应位置 */
@@ -10591,6 +10712,59 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       npc.mesh.position.x = target.x;
       npc.mesh.position.z = target.z;
       npc.mesh.position.y = W.groundY(target.x, target.z) + 1.225;
+
+      // 阴影与浮标要跟着走，否则换位后它们留在原地
+      if (npc.shadow) {
+        npc.shadow.position.x = target.x;
+        npc.shadow.position.z = target.z;
+        npc.shadow.position.y = W.groundY(target.x, target.z) + 0.02;
+      }
+      if (npc.marker) {
+        npc.marker.position.x = target.x;
+        npc.marker.position.z = target.z;
+        npc.marker.position.y = W.groundY(target.x, target.z) + 2.95;
+      }
+    }
+  };
+
+  /**
+   * 每帧更新 NPC 的浮标与朝向。
+   *
+   * 【为什么浮标要朝向相机】它是平面（billboard），
+   * 不转向相机的话从侧面看会变成一条线。
+   *
+   * 【为什么浮标要上下浮动】静态图标在满屏树木房子之间仍然不显眼；
+   * 一点点缓慢起伏能让眼睛捕捉到运动，这是最省成本的"可发现性"手段。
+   */
+  W.updateNPCs = function (dt, cameraYaw) {
+    if (!W.npcs) return;
+    for (var i = 0; i < W.npcs.length; i++) {
+      var npc = W.npcs[i];
+      if (!npc.marker) continue;
+
+      npc.markerT = (npc.markerT || 0) + dt * 1.8;
+
+      // 上下浮动 ±0.08
+      var baseY = W.groundY(npc.x, npc.z) + 2.95;
+      npc.marker.position.y = baseY + Math.sin(npc.markerT) * 0.08;
+
+      // 面向相机（与 chibi 用同一套 yaw）
+      if (cameraYaw != null) {
+        npc.marker.rotation.y = cameraYaw;
+      }
+
+      // 亮度脉动：静态图标在满屏树木房子之间仍然不显眼，
+      // 一点点明暗呼吸能让眼睛捕捉到运动 —— 最省成本的"可发现性"手段。
+      var pulse = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(npc.markerT * 1.4));
+      var kids = npc.marker.children;
+      for (var k = 0; k < kids.length; k++) {
+        var m = kids[k].material;
+        if (!m) continue;
+        // 保持相对强弱：菱形 0.85、亮核 0.95、光柱 0.32
+        if (k === 0) m.opacity = 0.85 * pulse;
+        else if (k === 1) m.opacity = 0.95 * pulse;
+        else m.opacity = 0.32 * pulse;
+      }
     }
   };
 
@@ -14197,6 +14371,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
       // 世界（昼夜/刷怪/装饰动画）
       G.world.update(dt, MAIN.elapsed);
+
+      // NPC 浮标：上下浮动 + 始终面向相机
+      if (G.world.updateNPCs) G.world.updateNPCs(dt, G.camera.yaw);
 
       // 掉落
       G.loot.update(dt, st);

@@ -268,6 +268,9 @@
       // 世界（昼夜/刷怪/装饰动画）
       G.world.update(dt, MAIN.elapsed);
 
+      // NPC 浮标：上下浮动 + 始终面向相机
+      if (G.world.updateNPCs) G.world.updateNPCs(dt, G.camera.yaw);
+
       // 掉落
       G.loot.update(dt, st);
     }
