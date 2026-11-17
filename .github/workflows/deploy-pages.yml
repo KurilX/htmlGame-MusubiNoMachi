@@ -53,6 +53,18 @@ jobs:
           set -e
           mkdir -p _site
           cp game.html _site/game.html
+          # 素材包必须一起部署，否则线上加载 assets/pack/ 会 404。
+          # 这是漏掉过一次的真实缺陷：工作流只 cp 了 game.html，
+          # 结果线上 manifest.json 与全部角色图都 404，游戏静默降级。
+          if [ -d assets ]; then
+            cp -r assets _site/assets
+            COUNT=$(find _site/assets -type f | wc -l)
+            echo "assets deployed: $COUNT files"
+            test "$COUNT" -gt 0 || { echo "ERROR: assets 为空"; exit 1; }
+          else
+            echo "ERROR: assets/ 不存在——线上会降级为程序化贴图"
+            exit 1
+          fi
           printf '%s\n' \
             '<!DOCTYPE html>' \
             '<html lang="zh-CN"><head><meta charset="utf-8">' \
