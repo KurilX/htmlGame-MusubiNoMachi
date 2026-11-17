@@ -130,8 +130,47 @@
     }
     G.world.build();
 
+    // ---- 像素风切片（?style=pixel）----
+    //
+    // 用户希望改成 RPG Maker 那种 2D 俯视像素风。
+    // 完整重写约 4400 行风险太大，所以先做一个**可试玩的切片**：
+    // 用俯视贴图平面重建一个小场景，让用户先确认观感。
+    //
+    // 通过 URL 参数启用，不影响默认（等距 3D）体验：
+    //   ?style=pixel              像素切片
+    //   ?autostart=1&style=pixel  直接进入
+    var usePixel = false;
+    try {
+      var qp = new URLSearchParams(window.location.search);
+      usePixel = (qp.get('style') === 'pixel');
+    } catch (e) { usePixel = false; }
+
+    var sliceScene = null;
+    if (usePixel && G.pixelScene && G.pixelArt) {
+      sliceScene = G.pixelScene.buildSlice();
+      if (sliceScene) {
+        G.world.scene = sliceScene;
+        G.world.inDungeon = false;
+        // 切片里自带动画，关掉原有世界的刷怪刷新
+        G.world.pixelSlice = true;
+        // 相机切正俯视（必须在 scene 换好之后）
+        if (G.pixelMode) G.pixelMode.on();
+      }
+    }
+
     // 玩家
     G.player.init(data);
+
+    // 【顺序很重要】把玩家起点放到切片中央，必须在 player.init 之后 ——
+    // player.init 之前 G.player.state 还是 null，直接赋值会抛
+    // "Cannot set properties of null (setting 'x')"，整个 startGame 中断，
+    // 表现为 UI 没初始化、__GAME_READY__ 永远不置位。
+    if (sliceScene && G.player.state) {
+      G.player.state.x = 0;
+      G.player.state.z = 0;
+      G.player.state.vx = 0;
+      G.player.state.vz = 0;
+    }
 
     // UI（构造函数幂等，这里确保存在）
     if (!G.ui.root) G.ui.init();
@@ -270,6 +309,11 @@
 
       // NPC 浮标：上下浮动 + 始终面向相机
       if (G.world.updateNPCs) G.world.updateNPCs(dt, G.camera.yaw);
+
+      // 像素风切片：角色行走动画与敌人转动
+      if (G.world.pixelSlice && G.pixelScene && G.pixelScene.update) {
+        G.pixelScene.update(dt, st);
+      }
 
       // 掉落
       G.loot.update(dt, st);

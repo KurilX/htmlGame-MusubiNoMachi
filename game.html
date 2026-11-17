@@ -771,7 +771,7 @@ canvas#gl {
   color: rgba(232,224,216,0.24);
 }
 </style>
-<!-- 构建产物：2026-11-17T02:56:41.443Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-17T03:35:06.548Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -4602,6 +4602,988 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     if (opt.hueShift != null) G.shadeTint.hueShift = opt.hueShift;
     if (opt.satBoost != null) G.shadeTint.satBoost = opt.satBoost;
     if (opt.lightMul != null) G.shadeTint.lightMul = opt.lightMul;
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/13-pixelmode.js ==== -->
+<script>
+/* 13-pixelmode.js — 像素风模式（RPG Maker 观感）
+ *
+ * 【为什么单独一个文件】
+ * 用户希望把画风改成 RPG Maker 那种 2D 俯视像素风。
+ * 但当前是 3D 等距（35° 斜俯视、可旋转、3D 地形高度），
+ * 两者是根本不同的表现体系，一次性重写 4400 行风险太大。
+ *
+ * 所以先做成**可切换模式**：
+ *   G.pixelMode.on()   正俯视 + 强制像素采样 + 瓦片化地面
+ *   G.pixelMode.off()  回到原来的等距视角
+ *
+ * 这样能立刻看到观感差异，也方便随时回退。
+ *
+ * 【RPG Maker 风格的关键特征】
+ *  1) **正俯视**（垂直向下看），不是斜俯视 —— 这是最根本的一条
+ *  2) **相机不可旋转**，固定方向
+ *  3) **瓦片网格**地面，边界清晰
+ *  4) 角色是固定朝向像素精灵（正面/背面/左/右），不是 8 方向
+ *  5) 物件也是平面贴图，不做 3D 立体
+ */
+(function (G) {
+  'use strict';
+
+  var PM = G.pixelMode = {
+    enabled: false,
+    // 保存切换前的相机参数，便于回退
+    _saved: null
+  };
+
+  /** 一个瓦片在世界坐标里多大（RPG Maker 常用 48px，这里取 2 世界单位） */
+  PM.TILE = 2;
+
+  /**
+   * 打开像素风模式。
+   * 只改相机与采样方式，不动几何体 —— 先看观感。
+   */
+  PM.on = function () {
+    if (PM.enabled) return;
+    PM.enabled = true;
+
+    var C = G.camera;
+    PM._saved = {
+      pitch: C.pitch,
+      yaw: C.yaw,
+      yawTarget: C.yawTarget,
+      distance: C.distance,
+      viewH: C.viewH,
+      pitchOffset: C.pitchOffset
+    };
+
+    // ---- 1. 「假俯视」而不是纯正俯视 ----
+    //
+    // 【关键发现】第一版设成 90°（垂直向下）后，玩家和 NPC 全部消失 ——
+    // 因为角色是竖直的 billboard 平面，从正上方看就是一条线。
+    //
+    // 但真正的 RPG Maker 也不是纯正俯视：
+    // 它的角色图是**预先画成"从高处俯视但能看到正脸"**的小人，
+    // 也就是美术层面已经做了 3/4 视角，相机才能是纯 2D。
+    //
+    // 我们在 3D 里没法凭空造出那种美术，所以用 62° 斜俯视：
+    //   - 角色 billboard 仍然可见（能看到脸和身子）
+    //   - 地面看起来足够"从上往下"，瓦片感成立
+    //   - 这是 Octopath / 很多 HD-2D 游戏的做法
+    C.pitch = 62 * Math.PI / 180;
+    C.pitchOffset = 0;
+    C.distance = 40;
+    C.viewH = 20;                    // 视野略收窄，角色相对更大
+
+    // ---- 2. 相机不旋转 ----
+    C.yaw = 0;
+    C.yawTarget = 0;
+
+    // ---- 3. 打标记：让其它模块知道现在是像素模式 ----
+    if (G.world) {
+      G.world.pixelMode = true;
+      PM._applyGroundTiles();
+    }
+
+    C.resize(G.INTERNAL_W / G.INTERNAL_H);
+    if (C.snap) C.snap();
+
+    G.log && G.log('[pixelMode] on');
+  };
+
+  /** 关掉像素风模式，恢复等距视角 */
+  PM.off = function () {
+    if (!PM.enabled) return;
+    PM.enabled = false;
+
+    var C = G.camera;
+    if (PM._saved) {
+      C.pitch = PM._saved.pitch;
+      C.yaw = PM._saved.yaw;
+      C.yawTarget = PM._saved.yawTarget;
+      C.distance = PM._saved.distance;
+      C.viewH = PM._saved.viewH;
+      C.pitchOffset = PM._saved.pitchOffset;
+    }
+    if (G.world) G.world.pixelMode = false;
+
+    C.resize(G.INTERNAL_W / G.INTERNAL_H);
+    if (C.snap) C.snap();
+
+    G.log && G.log('[pixelMode] off');
+  };
+
+  PM.toggle = function () {
+    if (PM.enabled) PM.off(); else PM.on();
+    return PM.enabled;
+  };
+
+  /**
+   * 正俯视时，相机不能转，所以角色朝向也要相应简化。
+   *
+   * 现在的 8 方向精灵依赖 camera.yaw 做映射；
+   * 正俯视下 yaw 固定为 0，映射会退化成固定值。
+   * 这里给出"像素风下应该用哪个方向"的映射：
+   *   世界朝向 → 4 方向（上/下/左/右）
+   */
+  PM.dir4FromAngle = function (worldAngle) {
+    // worldAngle 用 atan2(dx, dz)：0 = +z（屏幕下），PI/2 = +x（屏幕右）
+    // RPG Maker 的 4 方向：下、左、右、上
+    var a = worldAngle;
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+
+    // 分四个象限，每个 90°
+    if (a >= -Math.PI / 4 && a < Math.PI / 4) return 0;        // 下（+z）
+    if (a >= Math.PI / 4 && a < Math.PI * 3 / 4) return 1;     // 右（+x）
+    if (a >= Math.PI * 3 / 4 || a < -Math.PI * 3 / 4) return 2; // 上（-z）
+    return 3;                                                   // 左（-x）
+  };
+
+  /** 像素模式下 4 方向对应的中文名（调试用） */
+  PM.dir4Name = function (d) {
+    return ['下', '右', '上', '左'][d] || '?';
+  };
+
+  // =====================================================================
+  // 地面瓦片化（切片阶段：只叠一层网格线，验证观感）
+  // =====================================================================
+
+  /**
+   * 在现有地面上叠一层瓦片网格线。
+   *
+   * 【为什么不直接重建地面】切片阶段先验证观感：
+   * 如果网格线 + 正俯视就能带来 RPG Maker 的感觉，
+   * 再去做真正的地块系统。
+   */
+  PM._applyGroundTiles = function () {
+    if (!G.world || !G.world.scene) return;
+    if (PM._gridLines) return;   // 已经加过
+
+    var T = PM.TILE;
+    var size = 120;              // 覆盖视野的网格范围
+    var mat = new THREE.LineBasicMaterial({
+      color: new THREE.Color('#000000'),
+      transparent: true,
+      opacity: 0.10,
+      depthWrite: false
+    });
+
+    var g = new THREE.Group();
+    g.name = 'pixelGrid';
+
+    // 沿 x 方向的线
+    for (var i = -size / 2; i <= size / 2; i += T) {
+      var geoX = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-size / 2, 0, i),
+        new THREE.Vector3(size / 2, 0, i)
+      ]);
+      g.add(new THREE.Line(geoX, mat));
+    }
+    // 沿 z 方向的线
+    for (var j = -size / 2; j <= size / 2; j += T) {
+      var geoZ = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(j, 0, -size / 2),
+        new THREE.Vector3(j, 0, size / 2)
+      ]);
+      g.add(new THREE.Line(geoZ, mat));
+    }
+
+    g.position.y = 0.03;   // 略高于地面，避免 z-fighting
+    G.world.scene.add(g);
+    PM._gridLines = g;
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/14-pixel-art.js ==== -->
+<script>
+/* 14-pixel-art.js — 俯视像素贴图（程序化）
+ *
+ * 【设计约束】
+ *  - 零图片文件：所有贴图用 canvas 画出来
+ *  - NearestFilter 放大：保持硬边像素感，不做平滑
+ *  - 低分辨率：地块 16×16、角色 16×24，靠整数倍放大出像素颗粒
+ *
+ * 【为什么全部重画】
+ * 正俯视下，原先为斜视角做的 3D 几何体全部失效：
+ *   房子只剩屋顶、鸟居变成一根横杆、玩家（竖直 billboard）直接消失。
+ * 所以俯视风格必须用"俯视专用贴图"重新表达每个物件。
+ *
+ * 【配色】沿用原来的和风配色（朱红、米白、樱粉、苔绿），
+ * 只换表现方式，不换世界的气质。
+ */
+(function (G) {
+  'use strict';
+
+  var PA = G.pixelArt = {};
+
+  // ---------- canvas 工具 ----------
+  function makeCanvas(w, h) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    return { c: c, g: g };
+  }
+
+  function toTexture(canvas) {
+    var t = new THREE.CanvasTexture(canvas);
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  // 确定性随机（同一 seed 每次画出来一样）
+  function rng(seed) {
+    var s = seed | 0;
+    return function () {
+      s = (s * 1664525 + 1013904223) | 0;
+      return ((s >>> 8) & 0xFFFFFF) / 0xFFFFFF;
+    };
+  }
+
+  var cache = {};
+  function cached(key, fn) {
+    if (!cache[key]) cache[key] = fn();
+    return cache[key];
+  }
+
+  // =====================================================================
+  // 地面瓦片（16×16）
+  // =====================================================================
+
+  /**
+   * 草地瓦片。
+   * 要点：不能是纯色 —— 纯色放大后就是一块死板的大色块。
+   * 用 3 层深浅点阵制造"草"的颗粒感。
+   */
+  PA.grassTile = function (variant) {
+    return cached('grass' + (variant || 0), function () {
+      var m = makeCanvas(16, 16);
+      var g = m.g, r = rng(1000 + (variant || 0) * 37);
+
+      // 底色
+      g.fillStyle = '#7FA05A';
+      g.fillRect(0, 0, 16, 16);
+
+      // 深色草簇
+      for (var i = 0; i < 26; i++) {
+        var x = Math.floor(r() * 16), y = Math.floor(r() * 16);
+        g.fillStyle = r() > 0.5 ? '#6E8F4C' : '#8CB066';
+        g.fillRect(x, y, 1, 1);
+      }
+
+      // 少量亮色草尖（竖 2px，像草叶）
+      for (var j = 0; j < 5; j++) {
+        var x2 = Math.floor(r() * 16), y2 = Math.floor(r() * 14) + 1;
+        g.fillStyle = '#9CC274';
+        g.fillRect(x2, y2, 1, 2);
+      }
+
+      return m.c;
+    });
+  };
+
+  /** 土路瓦片 */
+  PA.dirtTile = function (variant) {
+    return cached('dirt' + (variant || 0), function () {
+      var m = makeCanvas(16, 16);
+      var g = m.g, r = rng(2000 + (variant || 0) * 53);
+
+      g.fillStyle = '#C4A878';
+      g.fillRect(0, 0, 16, 16);
+
+      for (var i = 0; i < 30; i++) {
+        var x = Math.floor(r() * 16), y = Math.floor(r() * 16);
+        var v = r();
+        g.fillStyle = v > 0.66 ? '#B09566' : (v > 0.33 ? '#D2B98C' : '#A88C5E');
+        g.fillRect(x, y, 1, 1);
+      }
+      // 几粒小石子
+      for (var j = 0; j < 3; j++) {
+        var sx = Math.floor(r() * 15), sy = Math.floor(r() * 15);
+        g.fillStyle = '#8E7B55';
+        g.fillRect(sx, sy, 2, 2);
+      }
+      return m.c;
+    });
+  };
+
+  /** 石板瓦片（城镇地面） */
+  PA.stoneTile = function () {
+    return cached('stone', function () {
+      var m = makeCanvas(16, 16);
+      var g = m.g, r = rng(3000);
+
+      g.fillStyle = '#B8B0A0';
+      g.fillRect(0, 0, 16, 16);
+
+      // 石板缝：横竖各一条
+      g.fillStyle = '#9A9284';
+      g.fillRect(0, 7, 16, 1);
+      g.fillRect(7, 0, 1, 16);
+
+      for (var i = 0; i < 18; i++) {
+        var x = Math.floor(r() * 16), y = Math.floor(r() * 16);
+        g.fillStyle = r() > 0.5 ? '#A89E8C' : '#C6BEB0';
+        g.fillRect(x, y, 1, 1);
+      }
+      return m.c;
+    });
+  };
+
+  // =====================================================================
+  // 角色行走图（4 方向 × 4 帧）
+  // =====================================================================
+  //
+  // 单帧 16×24，图集 64×96。
+  // 帧序：0=站立 1=迈左脚 2=站立 3=迈右脚（经典 RPG Maker 循环）
+  // 方向序：0=下（面向镜头）1=左 2=右 3=上
+  //
+  // 【为什么 4 方向而不是 8】俯视像素风格传统就是 4 方向；
+  // 8 方向在小尺寸下反而看不清差异。
+
+  PA.FRAME_W = 16;
+  PA.FRAME_H = 24;
+  PA.DIRS = 4;
+  PA.FRAMES = 4;
+
+  /**
+   * 画一个角色行走图集。
+   * @param {object} look  { kimono, kimonoSh, hair, hairSh, obi, skin }
+   */
+  PA.characterSheet = function (look) {
+    var key = 'char|' + [look.kimono, look.kimonoSh, look.hair, look.hairSh,
+      look.obi, look.skin].join(',');
+    return cached(key, function () {
+      var W = PA.FRAME_W, H = PA.FRAME_H;
+      var m = makeCanvas(W * PA.FRAMES, H * PA.DIRS);
+      var g = m.g;
+
+      var skin = look.skin || '#FCE0CE';
+      var hair = look.hair || '#4A3025';
+      var hairSh = look.hairSh || '#2E1E16';
+      var robe = look.kimono || '#F7C8D8';
+      var robeSh = look.kimonoSh || '#D9A0B8';
+      var obi = look.obi || '#7FB069';
+
+      // 腿的偏移：帧 0/2 站立，1 迈左，3 迈右
+      var legShift = [0, -1, 0, 1];
+
+      for (var d = 0; d < PA.DIRS; d++) {
+        for (var f = 0; f < PA.FRAMES; f++) {
+          var ox = f * W, oy = d * H;
+          var ls = legShift[f];
+
+          // ---- 腿（先画，被衣服盖住上半）----
+          g.fillStyle = '#E8DCC8';
+          if (d === 0 || d === 3) {
+            // 正面/背面：两条腿，交替前后
+            g.fillRect(ox + 5, oy + 18 + (ls < 0 ? -1 : 0), 2, 4);
+            g.fillRect(ox + 9, oy + 18 + (ls > 0 ? -1 : 0), 2, 4);
+          } else {
+            // 侧面：一条腿在前
+            g.fillRect(ox + 7, oy + 18 + (ls > 0 ? -1 : 0), 2, 4);
+            g.fillRect(ox + 6, oy + 18 + (ls < 0 ? -1 : 0), 2, 3);
+          }
+          // 鞋
+          g.fillStyle = '#5A4A3A';
+          if (d === 0 || d === 3) {
+            g.fillRect(ox + 5, oy + 22 + (ls < 0 ? -1 : 0), 2, 1);
+            g.fillRect(ox + 9, oy + 22 + (ls > 0 ? -1 : 0), 2, 1);
+          } else {
+            g.fillRect(ox + 6, oy + 22 + (ls > 0 ? -1 : 0), 3, 1);
+          }
+
+          // ---- 身体（和服）----
+          g.fillStyle = robe;
+          g.fillRect(ox + 4, oy + 12, 8, 7);
+          // 侧身时窄一点
+          if (d === 1 || d === 2) {
+            g.clearRect(ox + 4, oy + 12, 1, 7);
+            g.clearRect(ox + 11, oy + 12, 1, 7);
+          }
+          // 衣服暗部（左侧）
+          g.fillStyle = robeSh;
+          g.fillRect(ox + 4, oy + 12, 2, 7);
+          if (d === 1 || d === 2) {
+            g.fillRect(ox + 5, oy + 12, 1, 7);
+          }
+
+          // 腰带
+          g.fillStyle = obi;
+          g.fillRect(ox + 4, oy + 16, 8, 2);
+          if (d === 1 || d === 2) g.fillRect(ox + 5, oy + 16, 6, 2);
+
+          // ---- 头 ----
+          g.fillStyle = skin;
+          g.fillRect(ox + 5, oy + 5, 6, 6);
+
+          // 头发：按方向不同
+          g.fillStyle = hair;
+          if (d === 3) {
+            // 背面：整个后脑勺都是头发
+            g.fillRect(ox + 4, oy + 3, 8, 7);
+            g.fillStyle = hairSh;
+            g.fillRect(ox + 4, oy + 8, 8, 2);
+          } else if (d === 0) {
+            // 正面：刘海 + 两侧
+            g.fillRect(ox + 4, oy + 3, 8, 4);
+            g.fillRect(ox + 4, oy + 3, 1, 5);
+            g.fillRect(ox + 11, oy + 3, 1, 5);
+          } else {
+            // 侧面
+            g.fillRect(ox + 4, oy + 3, 8, 4);
+            if (d === 1) {
+              // 朝左：头发偏左
+              g.fillRect(ox + 3, oy + 3, 2, 6);
+            } else {
+              g.fillRect(ox + 11, oy + 3, 2, 6);
+            }
+          }
+
+          // ---- 眼睛（正面/侧面才有）----
+          if (d === 0) {
+            g.fillStyle = '#2E2320';
+            g.fillRect(ox + 6, oy + 8, 1, 1);
+            g.fillRect(ox + 9, oy + 8, 1, 1);
+          } else if (d === 1) {
+            g.fillStyle = '#2E2320';
+            g.fillRect(ox + 6, oy + 8, 1, 1);
+          } else if (d === 2) {
+            g.fillStyle = '#2E2320';
+            g.fillRect(ox + 9, oy + 8, 1, 1);
+          }
+        }
+      }
+
+      return m.c;
+    });
+  };
+
+  // =====================================================================
+  // 俯视物件
+  // =====================================================================
+
+  /**
+   * 房子（俯视）。
+   *
+   * 【要点】正俯视下只能看到屋顶，但完全只画屋顶会"认不出是房子"。
+   * 传统俯视像素游戏的做法：屋顶 + 底部露一条前墙（带门），
+   * 用这条墙表达"这是一栋立着的建筑"。
+   */
+  PA.houseTopDown = function (wTiles, dTiles, opt) {
+    opt = opt || {};
+    var roofColor = opt.roof || '#B0392E';
+    var roofDark = opt.roofDark || '#8A2A22';
+    var wallColor = opt.wall || '#E8DCC8';
+    var key = 'house|' + wTiles + 'x' + dTiles + '|' + roofColor + '|' + (opt.noren || '');
+
+    return cached(key, function () {
+      var W = wTiles * 16, H = dTiles * 16 + 8;   // 额外 8px 给前墙
+      var m = makeCanvas(W, H);
+      var g = m.g;
+      var r = rng(4000 + wTiles * 31 + dTiles * 17);
+
+      // ---- 屋顶（瓦片）----
+      g.fillStyle = roofColor;
+      g.fillRect(0, 0, W, dTiles * 16);
+
+      // 瓦片横纹
+      for (var y = 0; y < dTiles * 16; y += 4) {
+        g.fillStyle = roofDark;
+        g.fillRect(0, y, W, 1);
+        // 竖缝错位
+        var off = (y % 8 === 0) ? 0 : 4;
+        for (var x = off; x < W; x += 8) {
+          g.fillRect(x, y, 1, 4);
+        }
+      }
+
+      // 屋脊高光（顶部一条亮线）
+      g.fillStyle = opt.roofHi || '#D4655A';
+      g.fillRect(0, 0, W, 2);
+
+      // 屋顶边缘描边
+      g.fillStyle = roofDark;
+      g.fillRect(0, 0, W, 1);
+      g.fillRect(0, dTiles * 16 - 1, W, 1);
+      g.fillRect(0, 0, 1, dTiles * 16);
+      g.fillRect(W - 1, 0, 1, dTiles * 16);
+
+      // ---- 前墙（露在屋顶下方）----
+      var wy = dTiles * 16;
+      g.fillStyle = wallColor;
+      g.fillRect(0, wy, W, 8);
+      g.fillStyle = '#C8BCA8';
+      g.fillRect(0, wy + 7, W, 1);
+
+      // 门
+      var doorW = 10, doorX = Math.floor((W - doorW) / 2);
+      g.fillStyle = '#6B4A32';
+      g.fillRect(doorX, wy + 1, doorW, 7);
+
+      // 暖帘
+      if (opt.noren) {
+        g.fillStyle = opt.noren;
+        g.fillRect(doorX, wy + 1, doorW, 3);
+      }
+
+      return m.c;
+    });
+  };
+
+  /**
+   * 树（俯视）。
+   * 树冠从正上方看是一个圆形色块 + 明暗层次，
+   * 关键是**不能画成一个纯色圆**，要有叶簇的起伏。
+   */
+  PA.treeTopDown = function (seed, opt) {
+    opt = opt || {};
+    var canopy = opt.canopy || '#F0B8C8';     // 樱粉
+    var canopyHi = opt.canopyHi || '#FCD8E4';
+    var canopyLo = opt.canopyLo || '#D898AC';
+    var key = 'tree|' + seed + '|' + canopy;
+
+    return cached(key, function () {
+      var S = 28;
+      var m = makeCanvas(S, S);
+      var g = m.g;
+      var r = rng(5000 + seed * 97);
+      var c = S / 2;
+
+      // 树冠：多个重叠圆，制造叶簇起伏
+      for (var i = 0; i < 7; i++) {
+        var a = r() * Math.PI * 2;
+        var rad = r() * (c - 5);
+        var px = c + Math.cos(a) * rad;
+        var py = c + Math.sin(a) * rad;
+        var rr = 4 + r() * 4;
+        g.fillStyle = i % 3 === 0 ? canopyHi : (i % 3 === 1 ? canopy : canopyLo);
+        g.beginPath();
+        g.arc(px, py, rr, 0, Math.PI * 2);
+        g.fill();
+      }
+
+      // 中心亮部（受光）
+      g.fillStyle = canopyHi;
+      g.beginPath();
+      g.arc(c - 2, c - 2, 5, 0, Math.PI * 2);
+      g.fill();
+
+      // 外轮廓（硬边，像素风关键）
+      g.strokeStyle = canopyLo;
+      g.lineWidth = 1;
+      g.beginPath();
+      g.arc(c, c, c - 2, 0, Math.PI * 2);
+      g.stroke();
+
+      return m.c;
+    });
+  };
+
+  /** 鸟居（俯视）：两根柱子 + 一根横梁，从上面看是"H"形 */
+  PA.toriiTopDown = function () {
+    return cached('toriiTop', function () {
+      var W = 28, H = 14;
+      var m = makeCanvas(W, H);
+      var g = m.g;
+      var red = '#C0392B', redDark = '#8E2820';
+
+      // 横梁（上方）
+      g.fillStyle = red;
+      g.fillRect(0, 2, W, 4);
+      g.fillStyle = redDark;
+      g.fillRect(0, 5, W, 1);
+
+      // 两根柱子（纵向延伸，带阴影感）
+      g.fillStyle = red;
+      g.fillRect(3, 6, 3, 8);
+      g.fillRect(W - 6, 6, 3, 8);
+      g.fillStyle = redDark;
+      g.fillRect(3, 6, 1, 8);
+      g.fillRect(W - 6, 6, 1, 8);
+
+      return m.c;
+    });
+  };
+
+  /** 石灯笼（俯视）：一个小方块 + 顶部亮面 */
+  PA.lanternTopDown = function () {
+    return cached('lanternTop', function () {
+      var S = 10;
+      var m = makeCanvas(S, S);
+      var g = m.g;
+      g.fillStyle = '#8E8878';
+      g.fillRect(1, 1, 8, 8);
+      g.fillStyle = '#B8B2A0';
+      g.fillRect(2, 2, 6, 6);
+      g.fillStyle = '#F5E8B8';      // 灯芯
+      g.fillRect(4, 4, 2, 2);
+      return m.c;
+    });
+  };
+
+  /** 敌人（俯视）：小鬼 —— 圆身 + 两只角 */
+  PA.enemyTopDown = function (kind) {
+    var key = 'enemy|' + kind;
+    return cached(key, function () {
+      var W = 16, H = 16;
+      var m = makeCanvas(W, H);
+      var g = m.g;
+
+      var body, bodyHi, eye;
+      if (kind === 'yurei') { body = '#A8C8E0'; bodyHi = '#D8E8F4'; eye = '#2E2320'; }
+      else if (kind === 'kappa') { body = '#7FB069'; bodyHi = '#A8D494'; eye = '#2E2320'; }
+      else if (kind === 'tengu') { body = '#C0392B'; bodyHi = '#E05A4F'; eye = '#FFF'; }
+      else { body = '#E8A050'; bodyHi = '#F8C878'; eye = '#2E2320'; }   // onibi 等
+
+      // 身体（圆）
+      g.fillStyle = body;
+      g.beginPath();
+      g.arc(8, 9, 5.5, 0, Math.PI * 2);
+      g.fill();
+
+      // 高光
+      g.fillStyle = bodyHi;
+      g.beginPath();
+      g.arc(6, 7, 2.5, 0, Math.PI * 2);
+      g.fill();
+
+      // 轮廓
+      g.strokeStyle = '#2E2320';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.arc(8, 9, 5.5, 0, Math.PI * 2);
+      g.stroke();
+
+      // 眼睛
+      g.fillStyle = eye;
+      g.fillRect(6, 8, 1, 2);
+      g.fillRect(10, 8, 1, 2);
+
+      // 角（非幽霊）
+      if (kind !== 'yurei') {
+        g.fillStyle = '#F5E8B8';
+        g.fillRect(4, 2, 1, 2);
+        g.fillRect(11, 2, 1, 2);
+      }
+
+      return m.c;
+    });
+  };
+
+  // ---------- 转成 THREE 贴图 ----------
+  PA.tex = function (canvas) {
+    return cached('tex|' + (canvas.__id || (canvas.__id = Math.random().toString(36).slice(2))), function () {
+      return toTexture(canvas);
+    });
+  };
+
+  /** 直接给出 THREE 可用的贴图（内部处理缓存） */
+  PA.grassTexture = function (v) { return PA.tex(PA.grassTile(v || 0)); };
+  PA.dirtTexture = function (v) { return PA.tex(PA.dirtTile(v || 0)); };
+  PA.stoneTexture = function () { return PA.tex(PA.stoneTile()); };
+  PA.charTexture = function (look) { return PA.tex(PA.characterSheet(look)); };
+  PA.houseTexture = function (w, d, opt) { return PA.tex(PA.houseTopDown(w, d, opt)); };
+  PA.treeTexture = function (seed, opt) { return PA.tex(PA.treeTopDown(seed, opt)); };
+  PA.toriiTexture = function () { return PA.tex(PA.toriiTopDown()); };
+  PA.lanternTexture = function () { return PA.tex(PA.lanternTopDown()); };
+  PA.enemyTexture = function (kind) { return PA.tex(PA.enemyTopDown(kind)); };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/15-pixel-scene.js ==== -->
+<script>
+/* 15-pixel-scene.js — 俯视像素场景构建（切片版）
+ *
+ * 【这是什么】
+ * 把现有世界里"斜视角才成立"的 3D 物件，换成**俯视贴图平面**。
+ *
+ * 【为什么是"切片"】
+ * 完整重写 4400 行风险太大。这一版只搭一个可玩的小场景，
+ * 让用户先看观感：地面瓦片 + 房子 + 树 + 鸟居 + 灯笼 + 玩家 + 一只怪。
+ * 观感确认后再铺开到真实世界。
+ *
+ * 【核心手法】
+ * 全部用 `PlaneGeometry + 俯视贴图`，平铺在地面上（rotation.x = -PI/2）。
+ * 不用 3D 几何体 —— 正俯视下 3D 体的侧面完全看不到，纯属浪费。
+ */
+(function (G) {
+  'use strict';
+
+  var PS = G.pixelScene = {};
+
+  /** 建立切片场景，替换 G.world.scene */
+  PS.buildSlice = function () {
+    var PA = G.pixelArt;
+    if (!PA) { console.error('[pixelScene] pixelArt 未加载'); return null; }
+
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color('#6E8F4C');
+
+    // 正俯视不需要复杂光照：用环境光保证贴图原色
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+    var W = 60, D = 44;   // 切片地图尺寸（世界单位）
+
+    // ---------------- 地面：瓦片拼贴 ----------------
+    //
+    // 每个瓦片 2 世界单位。用 InstancedMesh 会失去单块贴图差异，
+    // 这里瓦片数量可控（30×22=660），直接画。
+    var TILE = 2;
+    var tilesX = Math.floor(W / TILE);
+    var tilesZ = Math.floor(D / TILE);
+
+    var grassTex = [PA.grassTexture(0), PA.grassTexture(1), PA.grassTexture(2)];
+    var dirtTex = [PA.dirtTexture(0), PA.dirtTexture(1)];
+
+    var tileGeo = new THREE.PlaneGeometry(TILE, TILE);
+    tileGeo.rotateX(-Math.PI / 2);
+
+    for (var tz = 0; tz < tilesZ; tz++) {
+      for (var tx = 0; tx < tilesX; tx++) {
+        var wx = -W / 2 + tx * TILE + TILE / 2;
+        var wz = -D / 2 + tz * TILE + TILE / 2;
+
+        // 中间走一条土路（沿 z 轴）
+        var isRoad = Math.abs(wx) < 3;
+        var tex = isRoad
+          ? dirtTex[(tx + tz) % dirtTex.length]
+          : grassTex[(tx * 7 + tz * 13) % grassTex.length];
+
+        var mat = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: false
+        });
+        var mesh = new THREE.Mesh(tileGeo, mat);
+        mesh.position.set(wx, 0, wz);
+        scene.add(mesh);
+      }
+    }
+
+    // ---------------- 房子 ----------------
+    //
+    // 用俯视贴图贴在地面上，稍微抬高一点避免和地面 z-fighting。
+    // PlaneGeometry 的宽高对应"屋顶的俯视投影"。
+    var houses = [
+      { x: -14, z: 2, w: 5, d: 4, opt: { roof: '#B0392E', noren: '#D9483B' } },
+      { x: 14, z: 3, w: 4.5, d: 3.5, opt: { roof: '#9A5A4A', noren: '#7FB8D8' } },
+      { x: -13, z: -8, w: 4, d: 3.5, opt: { roof: '#A8483A', noren: '#9CB87A' } },
+      { x: 13.5, z: -7, w: 5, d: 4, opt: { roof: '#8E3A30', noren: '#E8C25A' } }
+    ];
+    houses.forEach(function (h) {
+      var tex = PA.houseTexture(h.w, h.d, h.opt);
+      // 【竖直站立，不平铺】
+      // 62° 斜俯视下，平铺的贴片会被压成极扁的一条，几乎看不见。
+      // 竖起来才能既看到屋顶（因为俯视）又看到正面墙。
+      var pw = h.w * 2.0;
+      var ph = (h.d * 16 + 8) / 16 * 2.0;
+      var geo = new THREE.PlaneGeometry(pw, ph);
+      var mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+      var mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(h.x, ph / 2, h.z);
+      scene.add(mesh);
+    });
+
+    // ---------------- 树 ----------------
+    var treeSeeds = [1, 2, 3, 4, 5, 6, 7, 8];
+    var treePos = [
+      [-22, 14], [-16, 16], [16, 15], [22, 12],
+      [-24, -4], [24, -2], [-8, 18], [10, -18]
+    ];
+    treePos.forEach(function (p, i) {
+      var tex = PA.treeTexture(treeSeeds[i], {});
+      // 【竖直站立】同理：平铺的树冠在 62° 下会压成椭圆贴片
+      var size = 4.2;
+      var geo = new THREE.PlaneGeometry(size, size);
+      var mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+      var mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(p[0], size / 2, p[1]);
+      scene.add(mesh);
+
+      // 树影（这个要平铺在地面）
+      var shGeo = new THREE.PlaneGeometry(3.0, 3.0);
+      shGeo.rotateX(-Math.PI / 2);
+      var shMat = new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: 0.18
+      });
+      var sh = new THREE.Mesh(shGeo, shMat);
+      sh.position.set(p[0] + 0.8, 0.09, p[1] + 0.8);
+      scene.add(sh);
+    });
+
+    // ---------------- 鸟居 ----------------
+    var toriiW = 7, toriiH = 5;
+    var toriiGeo = new THREE.PlaneGeometry(toriiW, toriiH);
+    var toriiMesh = new THREE.Mesh(toriiGeo, new THREE.MeshBasicMaterial({
+      map: PA.toriiTexture(), transparent: true
+    }));
+    toriiMesh.position.set(0, toriiH / 2, 12);
+    scene.add(toriiMesh);
+
+    // ---------------- 灯笼 ----------------
+    var lanternTex = PA.lanternTexture();
+    [[-4, 8], [4, 8], [-4, 2], [4, 2], [-4, -4], [4, -4]].forEach(function (p) {
+      var s = 2.2;
+      var geo = new THREE.PlaneGeometry(s, s);
+      var mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        map: lanternTex, transparent: true
+      }));
+      mesh.position.set(p[0], s / 2, p[1]);
+      scene.add(mesh);
+    });
+
+    // ---------------- 角色：玩家 ----------------
+    var playerSheet = PA.charTexture({
+      kimono: '#5A8AC8', kimonoSh: '#3A6AA8',
+      hair: '#3B2E36', hairSh: '#2A1F26',
+      obi: '#E8C25A', skin: '#FCE0CE'
+    });
+    var playerMesh = PS._makeCharacterMesh(playerSheet);
+    scene.add(playerMesh);
+
+    // ---------------- 角色：NPC ----------------
+    var npcSheet = PA.charTexture({
+      kimono: '#F7C8D8', kimonoSh: '#D9A0B8',
+      hair: '#6B4A3A', hairSh: '#4A3025',
+      obi: '#7FB069', skin: '#FCE0CE'
+    });
+    var npcMesh = PS._makeCharacterMesh(npcSheet);
+    npcMesh.position.set(3, 0.5, 8);
+    scene.add(npcMesh);
+
+    // ---------------- 敌人 ----------------
+    var enemyMesh = PS._makeEnemyMesh(PA.enemyTexture('onibi'));
+    enemyMesh.position.set(-6, 0.4, -6);
+    scene.add(enemyMesh);
+
+    // 返回切片里的对象引用，供动画使用
+    PS._slice = {
+      scene: scene,
+      playerMesh: playerMesh,
+      playerSheet: playerSheet,
+      npcMesh: npcMesh,
+      npcSheet: npcSheet,
+      enemyMesh: enemyMesh
+    };
+
+    return scene;
+  };
+
+  /** 造一个角色 billboard（4 方向 × 4 帧） */
+  PS._makeCharacterMesh = function (sheet) {
+    var PA = G.pixelArt;
+    var W = PA.FRAME_W, H = PA.FRAME_H;
+    var geo = new THREE.PlaneGeometry(W / 8, H / 8);   // 16×24 px → 2×3 世界单位
+
+    // 【每个角色必须有独立的贴图对象】
+    // 因为切帧是靠改 texture.repeat/offset 实现的，而 THREE 的贴图是
+    // 按对象共享的 —— 两个角色共用一份贴图时，一个切帧另一个也跟着变。
+    // 所以这里 clone 一份。
+    var tex = sheet.clone();
+    tex.needsUpdate = true;
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.generateMipmaps = false;
+
+    var mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.baseSheet = sheet;
+    mesh.userData.dir = 0;
+    mesh.userData.frame = 0;
+    PS._setCharFrame(mesh, 0, 0);
+    mesh.position.y = H / 16;   // 脚踩地面
+    return mesh;
+  };
+
+  /** 设置角色当前方向与帧 */
+  PS._setCharFrame = function (mesh, dir, frame) {
+    var PA = G.pixelArt;
+    var tex = mesh.material && mesh.material.map;
+    if (!tex) return;
+
+    // 【必须设 ClampToEdgeWrapping】
+    // 用 repeat/offset 切帧时，如果 wrap 是默认的 RepeatWrapping，
+    // 采样会跨过边缘取到相邻帧的像素，表现为角色身上出现横向错位条纹。
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+
+    tex.repeat.set(1 / PA.FRAMES, 1 / PA.DIRS);
+    // 图集里第 0 行在最上方，而 UV 的 v=0 在下方，所以要倒过来
+    tex.offset.set(frame / PA.FRAMES, 1 - (dir + 1) / PA.DIRS);
+
+    mesh.userData.dir = dir;
+    mesh.userData.frame = frame;
+  };
+
+  /** 敌人：单个平面贴图 */
+  PS._makeEnemyMesh = function (tex) {
+    var geo = new THREE.PlaneGeometry(2, 2);
+    geo.rotateX(-Math.PI / 2);      // 敌人平铺在地面（俯视看是个圆形）
+    var mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+    var mesh = new THREE.Mesh(geo, mat);
+    return mesh;
+  };
+
+  /**
+   * 每帧更新切片里的角色动画。
+   * 由主循环调用（若 slice 存在）。
+   */
+  PS.update = function (dt, playerState) {
+    if (!PS._slice) return;
+    var s = PS._slice;
+
+    // 玩家：跟随真实坐标，方向按移动方向
+    if (s.playerMesh && playerState) {
+      s.playerMesh.position.x = playerState.x;
+      s.playerMesh.position.z = playerState.z;
+
+      // 4 方向
+      if (G.pixelMode && G.pixelMode.dir4FromAngle) {
+        var dir = G.pixelMode.dir4FromAngle(playerState.facing);
+        // pixelMode 的 0=下 1=右 2=上 3=左
+        // characterSheet 的 0=下 1=左 2=右 3=上
+        var map = [0, 2, 3, 1];
+        var sheetDir = map[dir];
+
+        // 走路帧循环：静止用 0，移动时 1→2→3→2
+        var moving = Math.abs(playerState.vx) + Math.abs(playerState.vz) > 0.1;
+        PS._walkT = (PS._walkT || 0) + dt * 6;
+        var frame = moving ? (Math.floor(PS._walkT) % 4) : 0;
+
+        PS._setCharFrame(s.playerMesh, sheetDir, frame);
+      }
+    }
+
+    // NPC 轻微上下浮动（呼吸感）
+    if (s.npcMesh) {
+      PS._npcT = (PS._npcT || 0) + dt * 2;
+      s.npcMesh.position.y = 1.5 + Math.sin(PS._npcT) * 0.05;
+    }
+
+    // 敌人缓慢转圈（用旋转平面表现"游荡"）
+    if (s.enemyMesh) {
+      s.enemyMesh.rotation.y += dt * 0.8;
+    }
+  };
+
+  /** 清理切片 */
+  PS.clear = function () {
+    PS._slice = null;
   };
 
 })(window.G = window.G || {});
@@ -14234,8 +15216,47 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
     G.world.build();
 
+    // ---- 像素风切片（?style=pixel）----
+    //
+    // 用户希望改成 RPG Maker 那种 2D 俯视像素风。
+    // 完整重写约 4400 行风险太大，所以先做一个**可试玩的切片**：
+    // 用俯视贴图平面重建一个小场景，让用户先确认观感。
+    //
+    // 通过 URL 参数启用，不影响默认（等距 3D）体验：
+    //   ?style=pixel              像素切片
+    //   ?autostart=1&style=pixel  直接进入
+    var usePixel = false;
+    try {
+      var qp = new URLSearchParams(window.location.search);
+      usePixel = (qp.get('style') === 'pixel');
+    } catch (e) { usePixel = false; }
+
+    var sliceScene = null;
+    if (usePixel && G.pixelScene && G.pixelArt) {
+      sliceScene = G.pixelScene.buildSlice();
+      if (sliceScene) {
+        G.world.scene = sliceScene;
+        G.world.inDungeon = false;
+        // 切片里自带动画，关掉原有世界的刷怪刷新
+        G.world.pixelSlice = true;
+        // 相机切正俯视（必须在 scene 换好之后）
+        if (G.pixelMode) G.pixelMode.on();
+      }
+    }
+
     // 玩家
     G.player.init(data);
+
+    // 【顺序很重要】把玩家起点放到切片中央，必须在 player.init 之后 ——
+    // player.init 之前 G.player.state 还是 null，直接赋值会抛
+    // "Cannot set properties of null (setting 'x')"，整个 startGame 中断，
+    // 表现为 UI 没初始化、__GAME_READY__ 永远不置位。
+    if (sliceScene && G.player.state) {
+      G.player.state.x = 0;
+      G.player.state.z = 0;
+      G.player.state.vx = 0;
+      G.player.state.vz = 0;
+    }
 
     // UI（构造函数幂等，这里确保存在）
     if (!G.ui.root) G.ui.init();
@@ -14374,6 +15395,11 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
       // NPC 浮标：上下浮动 + 始终面向相机
       if (G.world.updateNPCs) G.world.updateNPCs(dt, G.camera.yaw);
+
+      // 像素风切片：角色行走动画与敌人转动
+      if (G.world.pixelSlice && G.pixelScene && G.pixelScene.update) {
+        G.pixelScene.update(dt, st);
+      }
 
       // 掉落
       G.loot.update(dt, st);
