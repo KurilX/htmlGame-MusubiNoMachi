@@ -33,6 +33,35 @@
 
   G.boot = function () {
     // =====================================================================
+    // 【2D 模式分流】
+    //
+    // ?mode=2d 走**完全独立**的 Canvas 2D 渲染管线：
+    //   不建 three.js 场景、不用 WebGL、不用正交相机。
+    // 这条路线是为了彻底摆脱"3D 引擎 + 像素贴图"导致的
+    // 图层穿透 / 角色消失 / 纹理混乱。
+    //
+    // 不带参数时仍走原来的 3D 路线，互不影响。
+    // =====================================================================
+    var use2d = false;
+    try {
+      var q2 = new URLSearchParams(window.location.search);
+      use2d = (q2.get('mode') === '2d');
+    } catch (e) { use2d = false; }
+
+    if (use2d && G.boot2d) {
+      // 2D 模式需要 input 先初始化（读键盘）
+      var canvas2 = document.getElementById('gl');
+      if (canvas2 && G.input) G.input.init(canvas2);
+      G.boot2d.start().catch(function (err) {
+        console.error('[boot] 2D 启动失败:', err);
+        if (G.loading) {
+          G.loading.setMessage('2D 启动失败: ' + (err && err.message ? err.message : err));
+        }
+      });
+      return;
+    }
+
+    // =====================================================================
     // 【加载页】
     //
     // 素材包（assets/pack/）需要先从磁盘读进来，这期间不能立壳 ——
