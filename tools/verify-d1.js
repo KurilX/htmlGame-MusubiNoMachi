@@ -103,7 +103,28 @@ async function run(cdp, check, results) {
   const url = 'file:///' + path.join(ROOT, 'dev.html').replace(/\\/g, '/').replace(/ /g, '%20') + cacheBust;
   console.log('打开 ' + url + '\n');
   await cdp.send('Page.navigate', { url });
-  await sleep(4000);
+
+  // 【必须轮询等待，不能用固定 sleep】
+  //
+  // 原来这里写的是 sleep(4000)。加入加载页之后，启动变成
+  // "加载页 + 素材加载 + 立壳 + 建世界"，4 秒已经不够，
+  // 探测时 G 还没定义，Runtime.evaluate 直接超时。
+  //
+  // 这个错误在项目里出现过多次（verify-online / verify-quest 都栽过），
+  // 规则是：**等页面就绪一律轮询**。
+  let booted = false;
+  for (let i = 0; i < 80; i++) {
+    await sleep(400);
+    try {
+      if (await cdp.eval(`(window.__GAME_READY__ === true) ? 1 : 0`) === 1) {
+        booted = true;
+        break;
+      }
+    } catch (e) { /* 页面还没就绪，继续等 */ }
+  }
+  if (!booted) {
+    console.log('  ✗ 等待游戏就绪超时（80 × 400ms = 32s）');
+  }
 
   // ---- 1. 启动 ----
   const bootState = await cdp.eval(`(function(){

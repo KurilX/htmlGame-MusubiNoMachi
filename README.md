@@ -14,7 +14,29 @@
 
 ## 离线玩
 
-下载 [`game.html`](game.html)，双击用浏览器打开。没有安装、没有服务器、没有登录。
+⚠ **本地需要用 HTTP 打开，不能直接双击 `game.html`。**
+
+```bash
+cd 项目目录
+python -m http.server 8899
+# 浏览器访问 http://localhost:8899/game.html
+```
+
+原因：浏览器禁止 `file://` 页面从本地文件系统加载外部图片贴图
+（实测 `THREE.TextureLoader` 会失败、`canvas.getImageData` 会被 CORS 拦）。
+双击打开时游戏会自动降级为程序化的旧画风，并在加载页说明原因。
+
+## 素材包
+
+像素素材来自 OpenGameArt 的 CC0 / CC-BY-SA 资源，位于 `assets/pack/`：
+
+| 素材 | 内容 | 授权 |
+|---|---|---|
+| Town Guards Vol.1 | 6 个角色，768×192 / 每帧 96×192 | CC0 |
+| Exterior 32×32 Town | 建筑瓦片集，256×2240 / 32px 网格 | CC0 / CC-BY-SA |
+| 16×16 Tiles | 地形瓦片集，240×240 / 16px 网格 | CC0 |
+
+游戏内可查看完整署名：主菜单 → 设置 → 素材来源。
 
 ### 操作
 
@@ -159,6 +181,7 @@ node tools/verify-perf.js     # 性能 6 项
 node tools/verify-quest.js    # 任务系统 19 项
 node tools/verify-intro.js    # 开场引导 24 项
 node tools/verify-menu.js     # 主菜单 37 项
+node tools/verify-pack.js http://localhost:8899/dev.html   # 素材包 19 项（需先起 HTTP）
 node tools/verify-dungeon.js  # 副本系统 23 项
 node tools/verify-questlines.js # 地区主线 17 项
 # 以上除 verify-online 外都支持传入 URL 测线上：

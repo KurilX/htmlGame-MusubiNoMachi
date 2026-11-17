@@ -45,7 +45,22 @@ const TARGET_URL = ensureAuto(process.argv[2] ||
   await cdp.send('Page.enable');
   try { await cdp.send('Network.enable'); await cdp.send('Network.setCacheDisabled', { cacheDisabled: true }); } catch (e) {}
   await cdp.send('Page.navigate', { url: TARGET_URL });
-  await sleep(5000);
+  
+  // 【轮询等待就绪，不要用固定 sleep】
+  // 加载页加入后，启动耗时不再固定；4.5~5s 的固定等待会偶发超时。
+  // 规则：等页面就绪一律轮询（这个错已在多个脚本上栽过）。
+  let __booted = false;
+  for (let __i = 0; __i < 90; __i++) {
+    await sleep(400);
+    try {
+      if (await cdp.eval('(window.__GAME_READY__ === true) ? 1 : 0') === 1) {
+        __booted = true;
+        break;
+      }
+    } catch (e) { /* 未就绪，继续等 */ }
+  }
+  if (!__booted) console.log('  ⚠ 等待就绪超时（90 × 400ms = 36s）');
+
 
   const spots = [
     { name: '城镇', x: 0, z: 0 },

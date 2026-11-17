@@ -58,7 +58,22 @@ async function main() {
   const url = 'file:///' + GAME.replace(/\\/g, '/') + '?autostart=1';
   console.log('打开 ' + url + '\n');
   await cdp.send('Page.navigate', { url });
-  await sleep(4500);
+  
+  // 【轮询等待就绪，不要用固定 sleep】
+  // 加载页加入后，启动耗时不再固定；4.5~5s 的固定等待会偶发超时。
+  // 规则：等页面就绪一律轮询（这个错已在多个脚本上栽过）。
+  let __booted = false;
+  for (let __i = 0; __i < 90; __i++) {
+    await sleep(400);
+    try {
+      if (await cdp.eval('(window.__GAME_READY__ === true) ? 1 : 0') === 1) {
+        __booted = true;
+        break;
+      }
+    } catch (e) { /* 未就绪，继续等 */ }
+  }
+  if (!__booted) console.log('  ⚠ 等待就绪超时（90 × 400ms = 36s）');
+
 
   // ---- 启动 ----
   const boot = await cdp.eval(`(function(){

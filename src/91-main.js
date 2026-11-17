@@ -32,7 +32,54 @@
   // =====================================================================
 
   G.boot = function () {
-    G.bootShell();
+    // =====================================================================
+    // 【加载页】
+    //
+    // 素材包（assets/pack/）需要先从磁盘读进来，这期间不能立壳 ——
+    // 否则会先看到程序化贴图的画面闪一下再跳变。
+    //
+    // 流程：
+    //   1) 显示 loading 页
+    //   2) 加载 manifest + 全部贴图（进度条实时更新）
+    //   3) file:// 时给出明确提示，然后走降级路径
+    //   4) 淡出 loading，立壳
+    // =====================================================================
+    var needsLoading = false;
+    try {
+      var ql = new URLSearchParams(window.location.search);
+      // 默认就加载素材包；?nopack=1 可强制关闭
+      needsLoading = (ql.get('nopack') !== '1');
+    } catch (e) { needsLoading = true; }
+
+    if (!needsLoading || !G.assets || !G.loading) {
+      G.bootShell();
+      return;
+    }
+
+    G.loading.build();
+
+    if (!G.assets.canLoadExternal()) {
+      // file:// 下加载不了外部贴图，明确告知而不是黑屏
+      G.loading.showFileProtocolNote();
+      G.loading.setMessage('file:// 模式：使用程序化贴图');
+      // 留 1.4 秒让人看清提示
+      setTimeout(function () {
+        G.loading.hide(function () { G.bootShell(); });
+      }, 1400);
+      return;
+    }
+
+    G.assets.load().then(function () {
+      if (G.assets.hasPack()) {
+        G.loading.setMessage('素材包就绪');
+      } else {
+        G.loading.setMessage('素材包加载失败，使用程序化贴图');
+        console.warn('[boot] 素材包不可用:', G.assets.error);
+      }
+      setTimeout(function () {
+        G.loading.hide(function () { G.bootShell(); });
+      }, 250);
+    });
   };
 
   /** 第一阶段：把壳立起来，显示主菜单 */
@@ -139,27 +186,74 @@
     // 通过 URL 参数启用，不影响默认（等距 3D）体验：
     //   ?style=pixel              像素切片
     //   ?autostart=1&style=pixel  直接进入
-    var usePixel = false;
+    // ---- 外部素材包场景 ----
+    //
+    // 【为什么有两条分支】
+    //   style=pack   → 用下载的成熟素材包（assets/pack/），需 HTTP
+    //   style=pixel  → 上一版的自绘像素切片（保留，作为素材包不可用时的对照）
+    //
+    // 素材包是用户要求的正式路线；自绘那版明确被否决了，但先留着不删，
+    // 等素材包版本确认可用后再清理。
+    var styleMode = null;
     try {
       var qp = new URLSearchParams(window.location.search);
-      usePixel = (qp.get('style') === 'pixel');
-    } catch (e) { usePixel = false; }
+      styleMode = qp.get('style');
+    } catch (e) { styleMode = null; }
+
+    // 默认：如果有素材包就用素材包（这是新的主路线）
+    if (!styleMode && G.assets && G.assets.hasPack()) styleMode = 'pack';
 
     var sliceScene = null;
-    if (usePixel && G.pixelScene && G.pixelArt) {
+
+    if (styleMode === 'pack' && G.assets && G.assets.hasPack() && G.packScene) {
+      var packScene = G.packScene.build();
+      if (packScene) {
+        G.world.scene = packScene;
+        G.world.inDungeon = false;
+        G.world.pixelSlice = true;        // 复用：跳过原世界的刷怪刷新
+        G.world.packMode = true;
+        if (G.pixelMode) G.pixelMode.on();
+        sliceScene = packScene;
+        G.log && G.log('[style] 使用外部素材包');
+      }
+    } else if (styleMode === 'pixel' && G.pixelScene && G.pixelArt) {
       sliceScene = G.pixelScene.buildSlice();
       if (sliceScene) {
         G.world.scene = sliceScene;
         G.world.inDungeon = false;
-        // 切片里自带动画，关掉原有世界的刷怪刷新
         G.world.pixelSlice = true;
-        // 相机切正俯视（必须在 scene 换好之后）
         if (G.pixelMode) G.pixelMode.on();
+        G.log && G.log('[style] 使用自绘像素切片');
       }
     }
 
     // 玩家
     G.player.init(data);
+
+    // 【素材包模式下要清掉旧世界的角色】
+    //
+    // 问题：player.init() 会把玩家 mesh 加进 G.world.scene，
+    // 而此时 scene 已经换成素材包场景了 —— 于是原版玩家
+    // （512×1248 的 8 方向图集）就叠在新场景里。
+    // NPC 同理（buildNPCs 在 world.build 里执行过）。
+    //
+    // 这些旧元素在素材包画面里完全不该出现，必须移除。
+    if (styleMode === 'pack' && G.world.packMode) {
+      var stale = [];
+      G.world.scene.traverse(function (o) {
+        if (!o.isMesh || !o.material || !o.material.map) return;
+        var img = o.material.map.image;
+        // 原版图集是 512×1248（8 方向 × 13 帧）
+        if (img && img.width === 512 && img.height === 1248) stale.push(o);
+        // 原版玩家的阴影是 CircleGeometry 的半透明黑
+        if (o.geometry && o.geometry.type === 'CircleGeometry') stale.push(o);
+      });
+      stale.forEach(function (o) { if (o.parent) o.parent.remove(o); });
+      // NPC 列表也清空，避免逻辑层还在更新它们
+      if (G.world.npcs) G.world.npcs.length = 0;
+      if (G.player.mesh) G.player.mesh.visible = false;
+      G.log && G.log('[style] 清理旧角色 mesh: ' + stale.length + ' 个');
+    }
 
     // 【顺序很重要】把玩家起点放到切片中央，必须在 player.init 之后 ——
     // player.init 之前 G.player.state 还是 null，直接赋值会抛
@@ -310,9 +404,17 @@
       // NPC 浮标：上下浮动 + 始终面向相机
       if (G.world.updateNPCs) G.world.updateNPCs(dt, G.camera.yaw);
 
-      // 像素风切片：角色行走动画与敌人转动
-      if (G.world.pixelSlice && G.pixelScene && G.pixelScene.update) {
-        G.pixelScene.update(dt, st);
+      // 像素风画面：角色行走动画
+      //
+      // 两条分支共用 pixelSlice 标记：
+      //   packMode  → 外部素材包场景（18-pack-scene.js）
+      //   否则      → 自绘像素切片（15-pixel-scene.js）
+      if (G.world.pixelSlice) {
+        if (G.world.packMode && G.packScene && G.packScene.update) {
+          G.packScene.update(dt);
+        } else if (G.pixelScene && G.pixelScene.update) {
+          G.pixelScene.update(dt, st);
+        }
       }
 
       // 掉落

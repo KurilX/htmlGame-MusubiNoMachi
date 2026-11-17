@@ -771,7 +771,7 @@ canvas#gl {
   color: rgba(232,224,216,0.24);
 }
 </style>
-<!-- 构建产物：2026-11-17T03:35:06.548Z | 单文件、零外部依赖 | 双击即可运行 -->
+<!-- 构建产物：2026-11-17T06:34:38.032Z | 单文件、零外部依赖 | 双击即可运行 -->
 </head>
 <body>
 
@@ -4675,7 +4675,11 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     C.pitch = 62 * Math.PI / 180;
     C.pitchOffset = 0;
     C.distance = 40;
-    C.viewH = 20;                    // 视野略收窄，角色相对更大
+    // 【视野】用素材包时，32px 瓦片 = 2 世界单位，
+    // 一栋 8×6 格的房子就是 16×12 世界单位。
+    // viewH=20 时它占半屏，看不全城镇布局。
+    // 提到 34 大约能看 2 个街区，接近 RPG Maker 的取景。
+    C.viewH = 34;
 
     // ---- 2. 相机不旋转 ----
     C.yaw = 0;
@@ -5584,6 +5588,693 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   /** 清理切片 */
   PS.clear = function () {
     PS._slice = null;
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/16-assets.js ==== -->
+<script>
+/* 16-assets.js — 外部素材包加载器
+ *
+ * 【为什么要有这个文件】
+ * 用户要求：「改成可以下载美术包图片包的形式，加一个 loading 页面，
+ * 加载对应的材质，用网上有的比较成熟的这类素材包」。
+ *
+ * 这推翻了本项目原先两条硬约束：
+ *   1) 零外部资源（所有贴图程序化生成）
+ *   2) 单文件交付（双击 game.html 即玩）
+ *
+ * 【关于 file:// 的硬限制（已实测）】
+ *   - <img src="相对路径.png">           ✅ 能加载、能显示
+ *   - canvas.getImageData()              ❌ tainted by cross-origin data
+ *   - THREE.TextureLoader 在 file://     ❌ 加载失败（[object Event]）
+ *
+ * 所以素材包**必须通过 HTTP 打开**。用户已确认接受这一点。
+ * 双击 game.html 会走降级路径（程序化贴图），并在 loading 页说明原因。
+ *
+ * 【加载策略】
+ *   1) 读 assets/pack/manifest.json 拿到文件清单
+ *   2) 用 XMLHttpRequest 或 fetch 拿 JSON（HTTP 下没问题）
+ *   3) 逐张 THREE.TextureLoader 加载，回报进度
+ *   4) 全部完成后 resolve
+ */
+(function (G) {
+  'use strict';
+
+  var A = G.assets = {};
+
+  A.PACK_ROOT = 'assets/pack/';
+  A.manifest = null;
+  A.textures = {};        // id -> THREE.Texture
+  A.charSheets = {};      // id -> { tex, frameW, frameH }
+  A.loaded = false;
+  A.failed = false;
+  A.error = null;
+  A.available = false;    // 素材包是否可用（HTTP 环境下为 true）
+
+  // 进度回调（给 loading 页用）
+  A.onProgress = null;
+
+  /** 是否运行在能用外部资源的协议下 */
+  A.canLoadExternal = function () {
+    var p = window.location.protocol;
+    return p === 'http:' || p === 'https:';
+  };
+
+  /**
+   * 加载素材包。
+   * @returns {Promise<void>}
+   */
+  A.load = function () {
+    return new Promise(function (resolve) {
+      if (!A.canLoadExternal()) {
+        // file:// 下无法用 TextureLoader
+        A.available = false;
+        A.failed = false;
+        A.error = 'file:// 下浏览器不允许加载外部贴图';
+        console.warn('[assets] ' + A.error + '，将使用程序化贴图');
+        _report(1, 1, 'file:// 模式：跳过外部素材');
+        resolve();
+        return;
+      }
+
+      A._fetchJSON(A.PACK_ROOT + 'manifest.json')
+        .then(function (manifest) {
+          A.manifest = manifest;
+          A.available = true;
+          return A._loadAll(manifest);
+        })
+        .then(function () {
+          A.loaded = true;
+          resolve();
+        })
+        .catch(function (err) {
+          A.failed = true;
+          A.error = String(err && err.message ? err.message : err);
+          console.warn('[assets] 加载失败:', A.error);
+          // 失败不阻塞游戏：降级到程序化贴图
+          resolve();
+        });
+    });
+  };
+
+  // ---------- 内部 ----------
+
+  function _report(done, total, label) {
+    if (typeof A.onProgress === 'function') {
+      A.onProgress(done, total, label || '');
+    }
+  }
+
+  A._fetchJSON = function (url) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch (e) { reject(new Error('manifest.json 解析失败')); }
+        } else {
+          reject(new Error('manifest.json HTTP ' + xhr.status));
+        }
+      };
+      xhr.onerror = function () { reject(new Error('manifest.json 读取失败')); };
+      xhr.send();
+    });
+  };
+
+  A._loadAll = function (manifest) {
+    var jobs = [];
+
+    (manifest.files.chars || []).forEach(function (entry) {
+      jobs.push({ kind: 'char', id: entry.id, path: entry.path });
+    });
+    (manifest.files.tiles || []).forEach(function (entry) {
+      jobs.push({ kind: 'tile', id: entry.id, path: entry.path });
+    });
+
+    var total = jobs.length;
+    var done = 0;
+    _report(0, total, '准备加载素材');
+
+    return Promise.all(jobs.map(function (job) {
+      return A._loadTexture(A.PACK_ROOT + job.path)
+        .then(function (tex) {
+          if (job.kind === 'char') {
+            A.charSheets[job.id] = {
+              tex: tex,
+              frameW: manifest.character.frameWidth,
+              frameH: manifest.character.frameHeight,
+              framesPerSet: manifest.character.framesPerSet,
+              sets: manifest.character.sets
+            };
+          } else {
+            A.textures[job.id] = tex;
+          }
+          done++;
+          _report(done, total, job.id);
+        });
+    })).then(function () {
+      _report(total, total, '完成');
+    });
+  };
+
+  A._loadTexture = function (url) {
+    return new Promise(function (resolve, reject) {
+      var loader = new THREE.TextureLoader();
+      loader.load(
+        url,
+        function (tex) {
+          // 像素风必须最近邻采样，否则会糊成一团
+          tex.minFilter = THREE.NearestFilter;
+          tex.magFilter = THREE.NearestFilter;
+          tex.generateMipmaps = false;
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+          resolve(tex);
+        },
+        undefined,
+        function () {
+          reject(new Error('贴图加载失败: ' + url));
+        }
+      );
+    });
+  };
+
+  /** 取角色图集 */
+  A.getChar = function (id) {
+    return A.charSheets[id] || null;
+  };
+
+  /** 取瓦片贴图 */
+  A.getTile = function (id) {
+    return A.textures[id] || null;
+  };
+
+  /** 有没有任何可用素材 */
+  A.hasPack = function () {
+    return A.loaded && A.available;
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/17-loading.js ==== -->
+<script>
+/* 17-loading.js — 加载页
+ *
+ * 【职责】
+ *  - 在素材包加载期间显示进度条与当前加载的文件
+ *  - file:// 时给出明确提示（而不是黑屏让人以为坏了）
+ *  - 加载完成后淡出
+ *  - 提供"素材来源"面板（CC-BY 素材的法定署名要求）
+ */
+(function (G) {
+  'use strict';
+
+  var L = G.loading = {};
+
+  var root = null;
+  var bar = null;
+  var barText = null;
+  var stageText = null;
+  var noteEl = null;
+
+  L.build = function () {
+    if (root) return;
+
+    root = document.createElement('div');
+    root.id = 'loadingScreen';
+    root.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:99999',
+      'background:radial-gradient(ellipse at 50% 40%, #1A1620, #0A0810 70%)',
+      'display:flex', 'flex-direction:column',
+      'align-items:center', 'justify-content:center',
+      'font-family:"Noto Sans SC","Microsoft YaHei",sans-serif',
+      'transition:opacity .5s ease'
+    ].join(';');
+
+    // 标题
+    var title = document.createElement('div');
+    title.textContent = '結ノ町';
+    title.style.cssText = [
+      'font-size:34px', 'letter-spacing:12px', 'text-indent:12px',
+      'color:#F7C8D8', 'font-weight:300',
+      'text-shadow:0 0 24px rgba(247,200,216,0.35)',
+      'margin-bottom:6px'
+    ].join(';');
+    root.appendChild(title);
+
+    var sub = document.createElement('div');
+    sub.textContent = 'むすびのまち';
+    sub.style.cssText = 'font-size:11px;letter-spacing:5px;text-indent:5px;color:rgba(232,224,216,0.4);margin-bottom:38px';
+    root.appendChild(sub);
+
+    // 进度条
+    var track = document.createElement('div');
+    track.id = 'loadingTrack';
+    track.style.cssText = [
+      'width:300px', 'height:3px',
+      'background:rgba(247,200,216,0.15)',
+      'border-radius:2px', 'overflow:hidden'
+    ].join(';');
+    root.appendChild(track);
+
+    bar = document.createElement('div');
+    bar.id = 'loadingBar';
+    bar.style.cssText = [
+      'width:0%', 'height:100%',
+      'background:linear-gradient(90deg,#F7C8D8,#E8C25A)',
+      'transition:width .2s ease'
+    ].join(';');
+    track.appendChild(bar);
+
+    barText = document.createElement('div');
+    barText.style.cssText = 'margin-top:10px;font-size:11px;color:rgba(232,224,216,0.5)';
+    barText.textContent = '准备中…';
+    root.appendChild(barText);
+
+    stageText = document.createElement('div');
+    stageText.style.cssText = 'margin-top:4px;font-size:10px;color:rgba(232,224,216,0.28);height:14px';
+    root.appendChild(stageText);
+
+    // 提示区（file:// 警告等）
+    noteEl = document.createElement('div');
+    noteEl.style.cssText = [
+      'margin-top:30px', 'max-width:440px', 'padding:12px 16px',
+      'font-size:11px', 'line-height:1.7',
+      'color:#E8C25A', 'background:rgba(232,194,90,0.08)',
+      'border-left:2px solid rgba(232,194,90,0.5)',
+      'border-radius:3px', 'display:none',
+      'text-align:left'
+    ].join(';');
+    root.appendChild(noteEl);
+
+    document.body.appendChild(root);
+
+    // 进度回调接到加载器
+    if (G.assets) {
+      G.assets.onProgress = function (done, total, label) {
+        L.setProgress(done, total, label);
+      };
+    }
+  };
+
+  L.setProgress = function (done, total, label) {
+    if (!bar) return;
+    var pct = total > 0 ? (done / total) * 100 : 0;
+    bar.style.width = pct.toFixed(1) + '%';
+    barText.textContent = '加载素材 ' + done + ' / ' + total;
+    if (label) stageText.textContent = label;
+  };
+
+  L.setMessage = function (msg, isNote) {
+    if (!barText) return;
+    if (isNote) {
+      noteEl.style.display = '';
+      noteEl.innerHTML = msg;
+    } else {
+      barText.textContent = msg;
+    }
+  };
+
+  /** 显示 file:// 提示 */
+  L.showFileProtocolNote = function () {
+    if (!noteEl) return;
+    noteEl.style.display = '';
+    noteEl.innerHTML =
+      '<b>当前是 file:// 打开</b><br>' +
+      '浏览器不允许网页从本地文件系统加载外部图片贴图，' +
+      '所以本次会使用<b>程序化生成的贴图</b>（旧版画风）。<br><br>' +
+      '要看到素材包画风，请通过 HTTP 打开：<br>' +
+      '<code style="color:#F7C8D8">npx serve .</code> 或 ' +
+      '<code style="color:#F7C8D8">python -m http.server</code><br>' +
+      '然后访问 http://localhost:8000/game.html';
+  };
+
+  /** 淡出并移除 */
+  L.hide = function (cb) {
+    if (!root) { if (cb) cb(); return; }
+    root.style.opacity = '0';
+    setTimeout(function () {
+      if (root && root.parentNode) root.parentNode.removeChild(root);
+      root = null;
+      bar = null; barText = null; stageText = null; noteEl = null;
+      if (cb) cb();
+    }, 550);
+  };
+
+  // =====================================================================
+  // 素材来源（CC-BY 的署名要求）
+  // =====================================================================
+  L.showCredits = function () {
+    var m = G.assets && G.assets.manifest;
+    var wrap = document.createElement('div');
+    wrap.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:99998',
+      'background:rgba(10,8,16,0.94)',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'font-family:"Noto Sans SC","Microsoft YaHei",sans-serif'
+    ].join(';');
+
+    var panel = document.createElement('div');
+    panel.style.cssText = [
+      'width:min(560px,90vw)', 'max-height:80vh', 'overflow-y:auto',
+      'background:rgba(24,20,26,0.98)',
+      'border:1px solid rgba(247,200,216,0.2)',
+      'border-radius:6px', 'padding:24px 28px',
+      'font-size:12px', 'line-height:1.8', 'color:#E8E0D8'
+    ].join(';');
+
+    var h = document.createElement('div');
+    h.textContent = '素材来源';
+    h.style.cssText = 'font-size:16px;letter-spacing:3px;color:#F7C8D8;margin-bottom:16px';
+    panel.appendChild(h);
+
+    var list = (m && m.credits) ? m.credits : [];
+    if (!list.length) {
+      var p = document.createElement('div');
+      p.textContent = '当前使用程序化生成的贴图（无外部素材）。';
+      p.style.color = 'rgba(232,224,216,0.6)';
+      panel.appendChild(p);
+    } else {
+      list.forEach(function (c) {
+        var row = document.createElement('div');
+        row.style.cssText = 'margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.07)';
+
+        var t = document.createElement('div');
+        t.textContent = c.title;
+        t.style.cssText = 'color:#F3EBE4;margin-bottom:3px';
+        row.appendChild(t);
+
+        var a = document.createElement('div');
+        a.style.cssText = 'font-size:11px;color:rgba(232,224,216,0.55)';
+        a.textContent = '作者：' + c.author + '　授权：' + c.license;
+        row.appendChild(a);
+
+        if (c.url) {
+          var link = document.createElement('a');
+          link.href = c.url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = c.url;
+          link.style.cssText = 'font-size:10px;color:#7FB8C8;word-break:break-all';
+          row.appendChild(link);
+        }
+        panel.appendChild(row);
+      });
+    }
+
+    var close = document.createElement('button');
+    close.textContent = '关闭';
+    close.style.cssText = [
+      'margin-top:8px', 'padding:7px 18px',
+      'background:rgba(255,255,255,0.05)',
+      'border:1px solid rgba(255,255,255,0.18)',
+      'border-radius:3px', 'color:#E8E0D8',
+      'font-family:inherit', 'font-size:12px', 'cursor:pointer'
+    ].join(';');
+    close.onclick = function () { wrap.parentNode.removeChild(wrap); };
+    panel.appendChild(close);
+
+    wrap.appendChild(panel);
+    wrap.onclick = function (e) { if (e.target === wrap) wrap.parentNode.removeChild(wrap); };
+    document.body.appendChild(wrap);
+  };
+
+})(window.G = window.G || {});
+
+</script>
+<!-- ==== src/18-pack-scene.js ==== -->
+<script>
+/* 18-pack-scene.js — 用外部素材包构建场景
+ *
+ * 【与 14/15 的区别】
+ * 14-pixel-art.js 是**自己画**像素图（上一版，用户否决了这条路）。
+ * 本文件用**下载来的成熟素材包**，不做任何绘制。
+ *
+ * 【素材实际规格（已逐像素核实）】
+ *   角色 npc_0X__down.png : 768×192，8 帧横排，每帧 96×192，
+ *                           角色本体 24×156，前 4 帧持枪
+ *   exterior_32.png       : 256×2240，32px 网格（8 列 × 70 行）
+ *        row=40, col=5 → 纯草地瓦片（实测 RGB 141,170,85）
+ *        row=5,  col=0 → 红瓦屋顶（实测 RGB 174,103,91）
+ *        row=57, col=0 → 树丛
+ *
+ * 【图层穿透的修复（用户反馈的核心 bug）】
+ * 上一版"两个图层互相穿透"的原因有两个：
+ *   1) 地面瓦片在 y=0，物件也贴在 y≈0 → 深度相同，z-fighting
+ *   2) 用 `transparent: true` 依赖渲染排序 → 前后关系随视角乱跳
+ * 这一版：
+ *   - 明确分层：影子 y=0.01 < 地面装饰 y=0.02 < 物件 y>0.3
+ *   - 所有带 alpha 的贴图用 `alphaTest` 走深度写入，不依赖排序
+ *   - 每个 mesh 显式 renderOrder
+ */
+(function (G) {
+  'use strict';
+
+  var PK = G.packScene = {};
+
+  PK.TILE = 2;            // 一个瓦片 2 世界单位
+  PK.GRID = 32;           // 素材包瓦片像素尺寸
+
+  // 素材包里各图块的位置（逐像素核实过的坐标）
+  var ATLAS = {
+    grass:  { row: 64, col: 4 },
+    tree:   { row: 57, col: 0 },
+    roof:   { row: 5,  col: 0 },
+    roofB:  { row: 5,  col: 1 }
+  };
+
+  /** 构建素材包场景 */
+  PK.build = function () {
+    if (!G.assets || !G.assets.hasPack()) {
+      console.warn('[packScene] 素材包不可用');
+      return null;
+    }
+
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color('#1E2A1A');
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+    var W = 60, D = 44;
+    var extTex = G.assets.getTile('exterior32');
+
+    // ================= 地面 =================
+    //
+    // 从 exterior_32 裁出草地单块，做成可重复贴图。
+    // 关键：必须切出**独立 canvas**，否则 repeat 会让整张图集平铺。
+    if (extTex) {
+      var grassTex = _cutTile(extTex, ATLAS.grass.row, ATLAS.grass.col);
+      grassTex.wrapS = THREE.RepeatWrapping;
+      grassTex.wrapT = THREE.RepeatWrapping;
+      grassTex.repeat.set(W / PK.TILE, D / PK.TILE);
+
+      var floorGeo = new THREE.PlaneGeometry(W, D);
+      floorGeo.rotateX(-Math.PI / 2);
+      var floor = new THREE.Mesh(floorGeo, new THREE.MeshBasicMaterial({ map: grassTex }));
+      floor.position.y = 0;
+      floor.renderOrder = 0;
+      scene.add(floor);
+    }
+
+    // ================= 房子 =================
+    //
+    // 用红瓦屋顶平铺成房子俯视。
+    // 屋顶整体抬到 y=0.6，与地面拉开距离，彻底消除穿透。
+    var houses = [
+      { x: -14, z: 2,  w: 8,   d: 6,   rot: 0 },
+      { x: 14,  z: 3,  w: 7,   d: 5.5, rot: 0 },
+      { x: -13, z: -8, w: 6.5, d: 5.5, rot: 0 },
+      { x: 13.5,z: -7, w: 8,   d: 6,   rot: 0 }
+    ];
+
+    if (extTex) {
+      houses.forEach(function (h) {
+        var roofTex = _cutTile(extTex, ATLAS.roof.row, ATLAS.roof.col);
+        roofTex.wrapS = THREE.RepeatWrapping;
+        roofTex.wrapT = THREE.RepeatWrapping;
+        // 一块瓦片 = 2 世界单位，所以 repeat = 尺寸 / 2
+        roofTex.repeat.set(h.w / 2, h.d / 2);
+
+        var g = new THREE.PlaneGeometry(h.w * PK.TILE, h.d * PK.TILE);
+        g.rotateX(-Math.PI / 2);
+        var roof = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: roofTex }));
+        roof.position.set(h.x, 0.6, h.z);   // ← 明显高于地面
+        roof.renderOrder = 20;
+        scene.add(roof);
+
+        // 影子：比屋顶大一圈，贴地
+        var sg = new THREE.PlaneGeometry(h.w * PK.TILE * 1.08, h.d * PK.TILE * 1.08);
+        sg.rotateX(-Math.PI / 2);
+        var sh = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({
+          color: 0x000000, transparent: true, opacity: 0.20, depthWrite: false
+        }));
+        sh.position.set(h.x + 0.6, 0.02, h.z + 0.6);   // ← 只比地面高一点点
+        sh.renderOrder = 1;
+        scene.add(sh);
+      });
+    }
+
+    // ================= 树 =================
+    if (extTex) {
+      var treePos = [[-22, 14], [-16, 16], [16, 15], [22, 12], [-24, -4], [24, -2]];
+      treePos.forEach(function (p) {
+        var treeTex = _cutTile(extTex, ATLAS.tree.row, ATLAS.tree.col);
+        var s = 3.2;
+        var g = new THREE.PlaneGeometry(s, s);
+        var m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+          map: treeTex, alphaTest: 0.5, transparent: true, side: THREE.DoubleSide
+        }));
+        // 树是竖直的，脚底贴地 → 上移一半高度
+        m.position.set(p[0], s / 2, p[1]);
+        m.renderOrder = 30;
+        scene.add(m);
+
+        var sg = new THREE.PlaneGeometry(2.4, 2.4);
+        sg.rotateX(-Math.PI / 2);
+        var sh = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({
+          color: 0x000000, transparent: true, opacity: 0.18, depthWrite: false
+        }));
+        sh.position.set(p[0] + 0.5, 0.02, p[1] + 0.5);
+        sh.renderOrder = 1;
+        scene.add(sh);
+      });
+    }
+
+    // ================= 角色（素材包守卫） =================
+    var charIds = ['guard01', 'guard02', 'guard03', 'guard04', 'guard05', 'guard06'];
+    var charPositions = [[3, 8], [-6, 5], [8, -4], [-10, -2], [0, 12], [16, 10]];
+
+    PK._chars = [];
+    charIds.forEach(function (id, i) {
+      var info = G.assets.getChar(id);
+      if (!info) return;
+      var mesh = _makeCharMesh(info);
+      var p = charPositions[i] || [0, 0];
+      mesh.position.set(p[0], 0, p[1]);     // build 内部已把脚底对齐
+      mesh.renderOrder = 40;
+      scene.add(mesh);
+
+      var sg = new THREE.PlaneGeometry(1.8, 1.8);
+      sg.rotateX(-Math.PI / 2);
+      var sh = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: 0.25, depthWrite: false
+      }));
+      sh.position.set(p[0], 0.02, p[1]);
+      sh.renderOrder = 1;
+      scene.add(sh);
+
+      PK._chars.push({ mesh: mesh, info: info, animT: Math.random() * 2 });
+    });
+
+    PK._scene = scene;
+    return scene;
+  };
+
+  // =====================================================================
+  // 内部工具
+  // =====================================================================
+
+  /**
+   * 从图集里切出一块 32×32 瓦片，生成独立贴图。
+   *
+   * 【为什么用 canvas 切而不是 UV offset/repeat】
+   * 用 UV 裁切时，只要 repeat > 1（要平铺就必须 > 1），
+   * 采样器就会在**整张图集**上循环取 0~1，而不是重复那个子块 ——
+   * 这正是第一版"整张图集被铺满地面"的原因。
+   * 切到独立 canvas 后，repeat 的语义才正确。
+   */
+  function _cutTile(srcTex, row, col, ts) {
+    ts = ts || PK.GRID;
+    var img = srcTex && srcTex.image;
+    if (!img) return null;
+
+    var cv = document.createElement('canvas');
+    cv.width = ts; cv.height = ts;
+    var g = cv.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.drawImage(img, col * ts, row * ts, ts, ts, 0, 0, ts, ts);
+
+    var t = new THREE.CanvasTexture(cv);
+    t.needsUpdate = true;
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    if (THREE.SRGBColorSpace) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  /** 造角色 mesh（4 帧行走图，脚底对齐 y=0） */
+  function _makeCharMesh(info) {
+    var img = info.tex.image;
+    var fw = info.frameW, fh = info.frameH;
+
+    // 角色本体在 96×192 帧里的实际区域（逐像素测过：x 0~95, y 0~191，本体 24×156）
+    // 直接用整帧，靠 alpha 显示本体。
+    var W = 96, H = 192;
+    var worldH = 3.2;
+    var worldW = worldH * (W / H);   // 保持比例
+
+    // 切出第 0 帧（持枪站姿），做成独立贴图
+    var cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    var g = cv.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.drawImage(img, 0, 0, W, H, 0, 0, W, H);
+
+    var tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+
+    var geo = new THREE.PlaneGeometry(worldW, worldH);
+    var mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      // 【用 alphaTest 而不是纯 transparent】
+      // 纯 transparent 依赖排序，容易和地面/物件互相穿透；
+      // alphaTest 走深度写入，层次干净。
+      alphaTest: 0.5,
+      depthWrite: true,
+      side: THREE.DoubleSide
+    });
+
+    var mesh = new THREE.Mesh(geo, mat);
+    // 平面以中心为原点 → 上移一半，让脚底落在 y=0
+    mesh.position.y = worldH / 2;
+    mesh.userData.frameW = fw;
+    mesh.userData.frameH = fh;
+    mesh.userData.baseCanvas = cv;
+    mesh.userData.baseImg = img;
+    return mesh;
+  }
+
+  /** 每帧更新（行走动画：在独立 canvas 上重绘帧） */
+  PK.update = function (dt) {
+    if (!PK._chars || !G.assets) return;
+    PK._chars.forEach(function (c) {
+      c.animT += dt;
+      var frame = Math.floor(c.animT * 6) % 4;
+      if (frame === c.mesh.userData.lastFrame) return;
+      c.mesh.userData.lastFrame = frame;
+
+      // 重绘到 canvas（只画 96×192 的一帧）
+      var cv = c.mesh.userData.baseCanvas;
+      var img = c.mesh.userData.baseImg;
+      if (!cv || !img) return;
+      var g = cv.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      g.clearRect(0, 0, cv.width, cv.height);
+      g.drawImage(img, frame * 96, 0, 96, 192, 0, 0, 96, 192);
+      if (c.mesh.material.map) c.mesh.material.map.needsUpdate = true;
+    });
   };
 
 })(window.G = window.G || {});
@@ -15118,7 +15809,54 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   // =====================================================================
 
   G.boot = function () {
-    G.bootShell();
+    // =====================================================================
+    // 【加载页】
+    //
+    // 素材包（assets/pack/）需要先从磁盘读进来，这期间不能立壳 ——
+    // 否则会先看到程序化贴图的画面闪一下再跳变。
+    //
+    // 流程：
+    //   1) 显示 loading 页
+    //   2) 加载 manifest + 全部贴图（进度条实时更新）
+    //   3) file:// 时给出明确提示，然后走降级路径
+    //   4) 淡出 loading，立壳
+    // =====================================================================
+    var needsLoading = false;
+    try {
+      var ql = new URLSearchParams(window.location.search);
+      // 默认就加载素材包；?nopack=1 可强制关闭
+      needsLoading = (ql.get('nopack') !== '1');
+    } catch (e) { needsLoading = true; }
+
+    if (!needsLoading || !G.assets || !G.loading) {
+      G.bootShell();
+      return;
+    }
+
+    G.loading.build();
+
+    if (!G.assets.canLoadExternal()) {
+      // file:// 下加载不了外部贴图，明确告知而不是黑屏
+      G.loading.showFileProtocolNote();
+      G.loading.setMessage('file:// 模式：使用程序化贴图');
+      // 留 1.4 秒让人看清提示
+      setTimeout(function () {
+        G.loading.hide(function () { G.bootShell(); });
+      }, 1400);
+      return;
+    }
+
+    G.assets.load().then(function () {
+      if (G.assets.hasPack()) {
+        G.loading.setMessage('素材包就绪');
+      } else {
+        G.loading.setMessage('素材包加载失败，使用程序化贴图');
+        console.warn('[boot] 素材包不可用:', G.assets.error);
+      }
+      setTimeout(function () {
+        G.loading.hide(function () { G.bootShell(); });
+      }, 250);
+    });
   };
 
   /** 第一阶段：把壳立起来，显示主菜单 */
@@ -15225,27 +15963,74 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     // 通过 URL 参数启用，不影响默认（等距 3D）体验：
     //   ?style=pixel              像素切片
     //   ?autostart=1&style=pixel  直接进入
-    var usePixel = false;
+    // ---- 外部素材包场景 ----
+    //
+    // 【为什么有两条分支】
+    //   style=pack   → 用下载的成熟素材包（assets/pack/），需 HTTP
+    //   style=pixel  → 上一版的自绘像素切片（保留，作为素材包不可用时的对照）
+    //
+    // 素材包是用户要求的正式路线；自绘那版明确被否决了，但先留着不删，
+    // 等素材包版本确认可用后再清理。
+    var styleMode = null;
     try {
       var qp = new URLSearchParams(window.location.search);
-      usePixel = (qp.get('style') === 'pixel');
-    } catch (e) { usePixel = false; }
+      styleMode = qp.get('style');
+    } catch (e) { styleMode = null; }
+
+    // 默认：如果有素材包就用素材包（这是新的主路线）
+    if (!styleMode && G.assets && G.assets.hasPack()) styleMode = 'pack';
 
     var sliceScene = null;
-    if (usePixel && G.pixelScene && G.pixelArt) {
+
+    if (styleMode === 'pack' && G.assets && G.assets.hasPack() && G.packScene) {
+      var packScene = G.packScene.build();
+      if (packScene) {
+        G.world.scene = packScene;
+        G.world.inDungeon = false;
+        G.world.pixelSlice = true;        // 复用：跳过原世界的刷怪刷新
+        G.world.packMode = true;
+        if (G.pixelMode) G.pixelMode.on();
+        sliceScene = packScene;
+        G.log && G.log('[style] 使用外部素材包');
+      }
+    } else if (styleMode === 'pixel' && G.pixelScene && G.pixelArt) {
       sliceScene = G.pixelScene.buildSlice();
       if (sliceScene) {
         G.world.scene = sliceScene;
         G.world.inDungeon = false;
-        // 切片里自带动画，关掉原有世界的刷怪刷新
         G.world.pixelSlice = true;
-        // 相机切正俯视（必须在 scene 换好之后）
         if (G.pixelMode) G.pixelMode.on();
+        G.log && G.log('[style] 使用自绘像素切片');
       }
     }
 
     // 玩家
     G.player.init(data);
+
+    // 【素材包模式下要清掉旧世界的角色】
+    //
+    // 问题：player.init() 会把玩家 mesh 加进 G.world.scene，
+    // 而此时 scene 已经换成素材包场景了 —— 于是原版玩家
+    // （512×1248 的 8 方向图集）就叠在新场景里。
+    // NPC 同理（buildNPCs 在 world.build 里执行过）。
+    //
+    // 这些旧元素在素材包画面里完全不该出现，必须移除。
+    if (styleMode === 'pack' && G.world.packMode) {
+      var stale = [];
+      G.world.scene.traverse(function (o) {
+        if (!o.isMesh || !o.material || !o.material.map) return;
+        var img = o.material.map.image;
+        // 原版图集是 512×1248（8 方向 × 13 帧）
+        if (img && img.width === 512 && img.height === 1248) stale.push(o);
+        // 原版玩家的阴影是 CircleGeometry 的半透明黑
+        if (o.geometry && o.geometry.type === 'CircleGeometry') stale.push(o);
+      });
+      stale.forEach(function (o) { if (o.parent) o.parent.remove(o); });
+      // NPC 列表也清空，避免逻辑层还在更新它们
+      if (G.world.npcs) G.world.npcs.length = 0;
+      if (G.player.mesh) G.player.mesh.visible = false;
+      G.log && G.log('[style] 清理旧角色 mesh: ' + stale.length + ' 个');
+    }
 
     // 【顺序很重要】把玩家起点放到切片中央，必须在 player.init 之后 ——
     // player.init 之前 G.player.state 还是 null，直接赋值会抛
@@ -15396,9 +16181,17 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       // NPC 浮标：上下浮动 + 始终面向相机
       if (G.world.updateNPCs) G.world.updateNPCs(dt, G.camera.yaw);
 
-      // 像素风切片：角色行走动画与敌人转动
-      if (G.world.pixelSlice && G.pixelScene && G.pixelScene.update) {
-        G.pixelScene.update(dt, st);
+      // 像素风画面：角色行走动画
+      //
+      // 两条分支共用 pixelSlice 标记：
+      //   packMode  → 外部素材包场景（18-pack-scene.js）
+      //   否则      → 自绘像素切片（15-pixel-scene.js）
+      if (G.world.pixelSlice) {
+        if (G.world.packMode && G.packScene && G.packScene.update) {
+          G.packScene.update(dt);
+        } else if (G.pixelScene && G.pixelScene.update) {
+          G.pixelScene.update(dt, st);
+        }
       }
 
       // 掉落
