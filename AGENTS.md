@@ -2,11 +2,19 @@
 
 ## 这是什么
 
-单文件、双击即玩的**和风幻想动作 RPG**。零依赖、零网络、零外部资源：
-整个游戏就是一个 `game.html`（约 1.12 MB，内联全部代码与程序化贴图）。
-不是 MMO，是"有 MMO 世界结构感的单人动作 RPG"。
+**和风幻想动作 RPG**。不是 MMO，是"有 MMO 世界结构感的单人动作 RPG"。
+
+有两条渲染路线：
+
+| 路线 | 说明 | 需要 |
+|---|---|---|
+| **外部素材包**（默认） | CC0 像素素材，位于 `assets/pack/` | **HTTP 打开** |
+| 程序化贴图（降级） | 全部用 canvas 画，无外部文件 | 双击 `game.html` 即可 |
 
 线上：https://kurilx.github.io/htmlGame-MusubiNoMachi/
+
+⚠ **本地必须用 HTTP 打开**（`python -m http.server 8899`），
+原因见「素材包约定」。双击会降级并在加载页说明。
 
 ## 怎么跑
 
@@ -23,6 +31,7 @@ node tools/verify-dungeon.js   # 副本系统 23 项
 node tools/verify-questlines.js # 地区主线 17 项
 node tools/verify-intro.js    # 开场引导 24 项
 node tools/verify-menu.js     # 主菜单 37 项
+node tools/verify-pack.js http://localhost:8899/dev.html  # 素材包 19 项（需 HTTP）
 node tools/shot-natural.js <x> <z> out.png   # 用游戏相机截图
 ```
 
@@ -32,8 +41,10 @@ node tools/shot-natural.js <x> <z> out.png   # 用游戏相机截图
 ## 技术栈与硬约束
 
 - **Three.js r160 UMD 内联**（classic script）。`file://` 下 ESM 跨文件被 CORS 拦，不能用 module。
-- **全部贴图程序化生成**（`src/12-textures.js` 用 canvas 画）。零图片文件。
-- **禁止 `fetch` / `XHR`**。`file://` 下读本地文件会失败，数据全写成 JS 字面量放 `src/data/`。
+- **两条贴图来源**：外部素材包（`assets/pack/`，需 HTTP）/ 程序化生成
+  （`src/12-textures.js`，双击降级时用）。
+- **禁止用 `fetch`/`XHR` 读 `file://` 本地文件**。数据一律写成 JS 字面量放 `src/data/`。
+  素材清单例外：HTTP 下用 XHR 读 `assets/pack/manifest.json`。
 - 存档走 `localStorage` + JSON 导出兜底。
 - 渲染管线：场景 → 离屏 RT(1152×648) → Sobel 描边 → 屏幕。
 
@@ -81,13 +92,30 @@ tools/              CDP 验收与截图脚本
 **4 条地区主线（結ノ町6章 / 神山5章 / 湊町5章 / 渚5章，共 21 章）**、
 **城镇扩建（60×44）+ 10 条支线 + 14 个 NPC**、
 **开场演出（黑屏渐入 + 旁白 + 引导找 NPC → 对话后接任务）**、
-**主菜单 + 存档子菜单（启动拆成 bootShell / startGame 两段）**。
+**主菜单 + 存档子菜单（启动拆成 bootShell / startGame 两段）**、
+**外部素材包 + 加载页（CC0 像素素材，需 HTTP 打开）**。
 
 **未完成**：
 - 副本内可以补机关、宝箱、中途存档点。
 - `docs/ISSUE-blue-region.md` 记录的蓝色区域视觉缺陷。
 
 **已知性能问题**：线上首访启动约 25 秒（本地 4~6 秒），瓶颈在 `W.build` 的物件构建与 shader 编译。
+
+## 素材包约定（改图形资源时必看）
+
+- 素材在 `assets/pack/`，清单是 `manifest.json`；加载器 `src/16-assets.js`（`G.assets`）
+- **必须用 HTTP 打开**。`file://` 下 `THREE.TextureLoader` 会失败，
+  `canvas.getImageData` 会报 tainted —— 已实测确认，不是猜测
+- 双击打开时自动降级为程序化贴图，并在加载页给出原因（不要让它黑屏）
+- 加载页在 `src/17-loading.js`（`G.loading`），由 `G.boot()` 驱动：
+  显示 → `G.assets.load()` → 淡出 → `bootShell()`
+- 素材包场景在 `src/18-pack-scene.js`（`G.packScene`），通过 `?style=pack` 或自动启用
+- **从图集裁切瓦片必须切到独立 canvas**，不能只改 `texture.repeat/offset` ——
+  只要 `repeat > 1`，采样器就会在**整张图集**上循环，画面变成"整张图集铺满地面"
+- 素材坐标要逐像素核实（本项目实测：草地 `row=64,col=4`、红瓦 `row=5,col=0`）
+- **新建场景后要清理旧世界的角色 mesh**：`player.init()` 会把玩家图集
+  （512×1248）加进当前 scene，NPC 同理；不清理会叠在新场景里
+- 授权：CC-BY 素材必须在游戏内可查署名（`G.loading.showCredits()`）
 
 ## 主菜单约定（改启动/存档流程时必看）
 
@@ -167,6 +195,10 @@ tools/              CDP 验收与截图脚本
   曾误写成按到边界距离做 smoothstep，导致城镇靠边处地形只拉平一部分（NPC 悬空）。
 - **`regionAt` 按归一化椭圆距离判定**，城镇椭圆必须覆盖整个 TOWN 矩形（含四角），
   否则四角附近的 NPC 会被判到相邻地区。
+- **加一层加载页会打挂所有"固定 sleep 等启动"的脚本**。
+  本项目 5 个验收脚本用 `sleep(4500/5000)` 等启动，加入加载页后全部超时，
+  表现为「Runtime.evaluate timeout」且脚本无任何输出。
+  规则：**等页面就绪一律轮询 `__GAME_READY__`**，不用固定 sleep。
 - **测试会固化错误设计**。`verify-quest` 里曾有一条「开局自动接主线（无需找 NPC）」，
   它忠实地保护了一个错误行为 —— 我改掉自动接任务后，测试反而红了。
   改设计时必须同步改断言，否则测试会成为错误的守门人；断言描述的是**期望**，

@@ -1,0 +1,46 @@
+{
+  "name": "Musubi no Machi asset pack",
+  "version": 1,
+  "tileSize": 16,
+  "character": {
+    "frameWidth": 96,
+    "frameHeight": 192,
+    "framesPerSet": 4,
+    "sets": 2,
+    "note": "768x192，8 帧横排：前 4 帧持长枪，后 4 帧空手。"
+  },
+  "files": {
+    "chars": [
+      { "id": "guard01", "path": "chars/npc_01__down.png" },
+      { "id": "guard02", "path": "chars/npc_02__down.png" },
+      { "id": "guard03", "path": "chars/npc_03__down.png" },
+      { "id": "guard04", "path": "chars/npc_04__down.png" },
+      { "id": "guard05", "path": "chars/npc_05__down.png" },
+      { "id": "guard06", "path": "chars/npc_06__down.png" }
+    ],
+    "tiles": [
+      { "id": "exterior32", "path": "tiles/exterior_32.png" },
+      { "id": "minishcap", "path": "tiles/minishcap.png" }
+    ]
+  },
+  "credits": [
+    {
+      "title": "Town Guards Vol.1 (6 characters)",
+      "author": "jamatakeshi",
+      "license": "CC0 (public domain)",
+      "url": "https://opengameart.org/content/town-guards-vol1-%E2%80%94-6-characters-complete-sample-64px"
+    },
+    {
+      "title": "Exterior 32x32 Town Tileset",
+      "author": "OpenGameArt contributors",
+      "license": "CC0 / CC-BY-SA",
+      "url": "https://opengameart.org/content/exterior-32x32-town-tileset"
+    },
+    {
+      "title": "16x16 Tiles",
+      "author": "OpenGameArt contributors",
+      "license": "CC0",
+      "url": "https://opengameart.org/content/16x16-tiles"
+    }
+  ]
+}
