@@ -265,13 +265,19 @@ wall       row=3,  col=18     // 4_buildings
 ### 本地必须用 HTTP
 
 ```bash
-python -m http.server 8899
-# → http://localhost:8899/dev.html?mode=2d
+python -m http.server 8901
+# → http://localhost:8901/dev.html?mode=2d
 ```
 
 **为什么**：`file://` 下 `THREE.TextureLoader` 会失败、`canvas.getImageData` 会
 报 tainted —— 已实测确认。2D 版用 `<img>` 加载没问题，但 `getImageData` 仍然受限，
 所以**验收脚本必须走 HTTP**。
+
+> ⚠️ **端口说明**：用 `8901`，不要用 `8899`。
+> `8899` 在本机已被别的项目占用（`python -m http.server 8899 --directory docs`），
+> 再次占用会起不来或串到别人的服务上。
+> 如果 8901 也被占了，`8902`~`8905` 里挑一个空闲的即可 —— 端口本身不影响功能，
+> 但**验收命令里的 URL 要跟着改**。
 
 ### 2D 验收（24 项）
 
@@ -290,7 +296,7 @@ node tools/verify-2d.js https://kurilx.github.io/htmlGame-MusubiNoMachi/game.htm
 node tools/verify-d1.js      # 20/20
 node tools/verify-menu.js    # 37/37
 node tools/verify-intro.js   # 24/24
-node tools/verify-pack.js http://localhost:8899/dev.html   # 19/19
+node tools/verify-pack.js http://localhost:8901/dev.html   # 19/19
 ```
 
 改动共享模块（`91-main.js` / `70-ui.js` / `80-save.js`）后**必须**跑这几个。
@@ -397,7 +403,7 @@ tools/cdp.js            CDP 封装（动态端口）
 
 ```bash
 # 起服务
-python -m http.server 8899
+python -m http.server 8901
 
 # 构建单文件
 node build.mjs
